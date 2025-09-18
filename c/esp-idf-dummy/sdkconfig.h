@@ -1,0 +1,4 @@
+// required to compile at all
+#define CONFIG_LOG_DEFAULT_LEVEL 0 
+#define CONFIG_LOG_MAXIMUM_LEVEL 0
+#define CONFIG_LOG_TIMESTAMP_SOURCE_SYSTEM 1
