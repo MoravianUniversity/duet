@@ -1082,7 +1082,7 @@ esp_err_t duet_init(
     FREQS_INV = (float*)memalign(16, N_FREQ * sizeof(float));
     FREQS_POW_Q = (Q == 0.0f) ? NULL : (float*)memalign(16, N_FREQ * sizeof(float));
     AUDIO_FRAME_INIT_SIZE = WINDOW_SIZE_HALF * DECIMATION;
-    if (!WINDOW || !DUAL_WINDOW || !FREQUENCIES || !FREQS_INV || !FREQS_POW_Q) { duet_deinit(); return ESP_ERR_NO_MEM; }
+    if (!WINDOW || !DUAL_WINDOW || !FREQUENCIES || !FREQS_INV || (Q != 0.0f && !FREQS_POW_Q)) { duet_deinit(); return ESP_ERR_NO_MEM; }
 #endif
 
     init_decimate_fir_coeffs();
@@ -1099,25 +1099,24 @@ esp_err_t duet_init(
     if (Q != 0.0f) { init_freqs_pow_q(); }
     init_find_peaks();
 
-    // TODO: Temporarily disable this since we are testing
-    // // Allocate memory for the audio buffer and other arrays
-    // audio_temp = malloc0<float>(N_CHANNELS * WINDOW_SIZE_HALF * DECIMATION);
-    // audio = malloc0<float>(N_CHANNELS * N_SAMPLES);
-    // spectrogram = malloc0<cfloat>(N_CHANNELS * N_FREQ_TIME);
-    // alpha = malloc0<float>((N_CHANNELS-1) * N_FREQ_TIME);
-    // delta = malloc0<float>((N_CHANNELS-1) * N_FREQ_TIME);
-    // weights = malloc0<float>((N_CHANNELS-1) * N_FREQ_TIME);
-    // best = malloc0<uint8_t>(N_FREQ_TIME);
-    // if (!audio_temp || !audio || !spectrogram || !alpha || !delta || !weights || !best) {
-    //     duet_deinit();
-    //     return ESP_ERR_NO_MEM;
-    // }
+    // Allocate memory for the audio buffer and other arrays
+    audio_temp = malloc0<float>(N_CHANNELS * WINDOW_SIZE_HALF * DECIMATION);
+    audio = malloc0<float>(N_CHANNELS * N_SAMPLES);
+    spectrogram = malloc0<cfloat>(N_CHANNELS * N_FREQ_TIME);
+    alpha = malloc0<float>((N_CHANNELS-1) * N_FREQ_TIME);
+    delta = malloc0<float>((N_CHANNELS-1) * N_FREQ_TIME);
+    weights = malloc0<float>((N_CHANNELS-1) * N_FREQ_TIME);
+    best = malloc0<uint8_t>(N_FREQ_TIME);
+    if (!audio_temp || !audio || !spectrogram || !alpha || !delta || !weights || !best) {
+        duet_deinit();
+        return ESP_ERR_NO_MEM;
+    }
 
-    // // Start with 8 sources (can grow more later)
-    // alpha_peaks.reserve(8*(N_CHANNELS-1));
-    // delta_peaks.reserve(8*(N_CHANNELS-1));
-    // demixed_sources.reserve(8*N_FREQ_TIME);
-    // bad.reserve(8);
+    // Start with 8 sources (can grow more later)
+    alpha_peaks.reserve(8*(N_CHANNELS-1));
+    delta_peaks.reserve(8*(N_CHANNELS-1));
+    demixed_sources.reserve(8*N_FREQ_TIME);
+    bad.reserve(8);
 
     return ESP_OK;
 }

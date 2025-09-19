@@ -15,9 +15,7 @@ endfunction()
 # Note: need to make some changes to esp-dsp:
 # 1. dsps_cplx_gen_* file renaming to not conflict with other files (in CMakeLists.txt and the file itself)
 # 2. Adding the following near the end of modules/common/include/dsp_common.h:
-#     #elif defined(__APPLE__) && !defined(__x86_64__)
-#     // macOS Target on ARM (M1, M2, ...)  TODO: only clang
-#     #include <arm_neon.h>
+#     #elif defined(__clang__)
 #     #define dsp_get_cpu_cycle_count  __builtin_readcyclecounter
 include(esp-dsp/CMakeLists.txt)
 foreach(pth IN LISTS include_dirs)
