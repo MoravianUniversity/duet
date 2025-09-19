@@ -1181,15 +1181,12 @@ void duet_reset() {
  * `AUDIO_FRAME_INIT_SIZE` samples for each channel. This fills the
  * demixed_sources buffer with the demixed sources.
  */
-void _process_audio_frame(const int16_t * const frame) {
+void _process_audio_frame(const float * const frame) {
     // TODO: test with roll, roll2, roll_with_buffer, etc
-
-    // De-interleave and normalize the new data
-    prep_data(frame, AUDIO_FRAME_INIT_SIZE, audio_temp);
 
     // Decimate the new data, placing the results at the end of the audio buffer
     roll2(audio, N_CHANNELS*N_SAMPLES, WINDOW_SIZE_HALF);
-    decimate(audio_temp, AUDIO_FRAME_INIT_SIZE, audio, N_SAMPLES - WINDOW_SIZE_HALF);
+    decimate(frame, AUDIO_FRAME_INIT_SIZE, audio, N_SAMPLES - WINDOW_SIZE_HALF);
 
     // Compute the spectrogram for the new audio data
     roll2(spectrogram, N_CHANNELS*N_FREQ_TIME, 1);
@@ -1216,7 +1213,7 @@ int duet_get_n_channels() { return N_CHANNELS; }
 int duet_get_n_freq() { return N_FREQ; }
 int duet_get_n_time() { return N_TIME; }
 int duet_get_audio_frame_size() { return AUDIO_FRAME_INIT_SIZE; }
-const cfloat* duet_process_audio_frame(const int16_t * const frame, int* n_sources) {
+const cfloat* duet_process_audio_frame(const float * const frame, int* n_sources) {
     _process_audio_frame(frame);
     *n_sources = demixed_sources.size() / (N_FREQ_TIME);
     return demixed_sources.data();
@@ -1224,6 +1221,9 @@ const cfloat* duet_process_audio_frame(const int16_t * const frame, int* n_sourc
 #endif
 
 // void full_process_audio_frame(const int16_t * const frame) {
+//     // De-interleave and normalize the new data
+//     prep_data(frame, AUDIO_FRAME_INIT_SIZE, audio_temp);
+
 //     // Fill demixed_sources
 //     _process_audio_frame(frame);
 

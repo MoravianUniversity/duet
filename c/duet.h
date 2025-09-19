@@ -179,7 +179,7 @@ typedef float _Complex cfloat;
  * `process_audio_frame()` will contain lots of zeros. This includes after init
  * and after a reset.
  */
-const cfloat* duet_process_audio_frame(const int16_t * const frame, int* n_sources);
+const cfloat* duet_process_audio_frame(const float * const frame, int* n_sources);
 
 int duet_get_n_channels();
 int duet_get_n_freq();
