@@ -53,6 +53,11 @@ class DuetBase(metaclass=ABCMeta):
         return self._q
 
     @property
+    def use_sym_atn(self) -> bool:
+        """Whether to use symmetric attenuation for alpha or regular attenuation."""
+        return self._use_sym_atn
+
+    @property
     def stft(self) -> sp.signal.ShortTimeFFT:
         """The ShortTimeFFT object used to compute the STFT of the input signal."""
         return self._stft
@@ -74,6 +79,14 @@ class DuetBase(metaclass=ABCMeta):
         If 256 with a 44.1 kHz sampling rate, this would be 5.8 ms for each time slice.
         """
         return self.stft.m_num
+    
+    @property
+    def oversample(self) -> int:
+        """
+        The oversampling factor for the STFT. Larger values will result in better time
+        resolution but worse frequency resolution. Default is 1 (no oversampling).
+        """
+        return self.stft.mfft // self.stft.m_num
 
     @cached_property
     def frequencies(self) -> ndarray:
@@ -92,8 +105,8 @@ class DuetBase(metaclass=ABCMeta):
     _full_audio_len = None  # length of the full audio signal when running online
 
 
-    def __init__(self, sample_rate: int = 16000, *, window: int|ndarray = 256,
-                 p: float = 1.0, q: float = 0.0):
+    def __init__(self, sample_rate: int = 16000, *, window: int|ndarray = 256, oversample: int = 1,
+                 use_sym_atn: bool = True, p: float = 1.0, q: float = 0.0):
         """
         Initialize the DUET algorithm with the given parameters.
 
@@ -111,6 +124,11 @@ class DuetBase(metaclass=ABCMeta):
 
             If 1024 with a 16 kHz sampling rate, this would be 64 ms for each time slice.
             If 256 with a 44.1 kHz sampling rate, this would be 5.8 ms for each time slice.
+        oversample : int
+            The oversampling factor for the STFT. Larger values will result in better time
+            resolution but worse frequency resolution. Default is 1 (no oversampling).
+        use_sym_atn : bool
+            Whether to use symmetric attenuation for alpha or regular attenuation. Default is True.
         p : float
             The symmetric attenuation estimator value weights, default is 1.
         q : float
@@ -118,6 +136,7 @@ class DuetBase(metaclass=ABCMeta):
         """
         self._p = p
         self._q = q
+        self._use_sym_atn = use_sym_atn
 
         if isinstance(window, int):
             window_length = window
@@ -129,7 +148,7 @@ class DuetBase(metaclass=ABCMeta):
 
         self._stft = sp.signal.ShortTimeFFT(
             window, window_length - window_length // 2,
-            sample_rate, phase_shift=None)
+            sample_rate, phase_shift=None, mfft=window_length*oversample)
 
 
     def run(self, x: ndarray) -> ndarray:
@@ -149,14 +168,15 @@ class DuetBase(metaclass=ABCMeta):
             The separated sources, has shape (n_sources, n_samples).
         """
         x = self._normalize_data(x, self._force_stereo)
-        tf, tf_weights, sym_atn, delay = self._compute_all(x)
+        tf, tf_weights, alpha, delta = self._compute_all(x)
 
-        sym_atn_peaks, delay_peaks = self._find_peaks(tf_weights, sym_atn, delay)
-        if len(sym_atn_peaks) == 0:
+        alpha_peaks, delta_peaks = self._find_peaks(tf_weights, alpha, delta)
+        if len(alpha_peaks) == 0:
             return x
-
-        atn_peaks = self._convert_sym_to_atn(sym_atn_peaks)
-        best, sources = self._compute_sources(tf, atn_peaks, delay_peaks)
+        
+        if self._use_sym_atn:
+            alpha_peaks = self._convert_sym_to_atn(alpha_peaks)
+        best, sources = self._compute_sources(tf, alpha_peaks, delta_peaks)
         sources = self._demix(best, sources)
         return self._convert_to_time_domain(sources, end=x.shape[-1])
 
@@ -186,10 +206,10 @@ class DuetBase(metaclass=ABCMeta):
         x = self._normalize_data(x, self._force_stereo, True)
 
         # Compute the time-frequency representation of the input audio signal
-        # and the symmetric attenuation and delay values.
+        # and the attenuation (alpha) and delay (delta) values.
         # These are saved for the next call to update().
         self._tf = tf = self._construct_spectrogram(x)
-        self._sym_atn, self._delay = sym_atn, delay = self._compute_attenuation_and_delay(tf)
+        self._alpha, self._delta = alpha, delta = self._compute_alpha_and_delta(tf)
         self._tf_weights = tf_weights = self._compute_weights(tf)
 
         # Save the last `hop`` samples of the input signal for the next call
@@ -197,13 +217,14 @@ class DuetBase(metaclass=ABCMeta):
         self._full_audio_len = x.shape[-1]
 
         # Regular find peaks
-        sym_atn_peaks, delay_peaks = self._find_peaks(tf_weights, sym_atn, delay)
-        if len(sym_atn_peaks) == 0:
+        alpha_peaks, delta_peaks = self._find_peaks(tf_weights, alpha, delta)
+        if len(alpha_peaks) == 0:
             return x
 
         # The end is the same as regular
-        atn_peaks = self._convert_sym_to_atn(sym_atn_peaks)
-        best, sources = self._compute_sources(tf, atn_peaks, delay_peaks)
+        if self._use_sym_atn:
+            alpha_peaks = self._convert_sym_to_atn(alpha_peaks)
+        best, sources = self._compute_sources(tf, alpha_peaks, delta_peaks)
         sources = self._demix(best, sources)
         return self._convert_to_time_domain(sources, end=x.shape[-1])
 
@@ -246,28 +267,29 @@ class DuetBase(metaclass=ABCMeta):
 
         # Compute the new time-frequency representation values just on the new audio
         new_tf = self._update_spectrogram(x)
-        new_sym_atn, new_delay = self._compute_attenuation_and_delay(new_tf)
+        new_alpha, new_delta = self._compute_alpha_and_delta(new_tf)
         new_tf_weights = self._compute_weights(new_tf)
 
         # Append the new time-frequency representation values to the existing ones
         self._tf = tf = _roll(self._tf, new_tf)
-        self._sym_atn = sym_atn = _roll(self._sym_atn, new_sym_atn)
-        self._delay = delay = _roll(self._delay, new_delay)
+        self._alpha = alpha = _roll(self._alpha, new_alpha)
+        self._delta = delta = _roll(self._delta, new_delta)
         self._tf_weights = tf_weights = _roll(self._tf_weights, new_tf_weights)
 
         # Save the last hop samples of the input signal for the next call
         self._last_audio = x[:, -self.stft.hop:]
 
         # Update the peaks (subclasses may do an "update" or a full calculation here)
-        sym_atn_peaks, delay_peaks = self._find_peaks_update(
-            tf_weights, sym_atn, delay, new_tf_weights, new_sym_atn, new_delay
+        alpha_peaks, delta_peaks = self._find_peaks_update(
+            tf_weights, alpha, delta, new_tf_weights, new_alpha, new_delta
         )
-        if len(sym_atn_peaks) == 0:
+        if len(alpha_peaks) == 0:
             return self._convert_to_time_domain(tf, end=self._full_audio_len) if return_full else x
 
         # The end is the same as regular
-        atn_peaks = self._convert_sym_to_atn(sym_atn_peaks)
-        best, sources = self._compute_sources(tf, atn_peaks, delay_peaks)
+        if self._use_sym_atn:
+            alpha_peaks = self._convert_sym_to_atn(alpha_peaks)
+        best, sources = self._compute_sources(tf, alpha_peaks, delta_peaks)
         sources = self._demix(best, sources)
         if return_full:
             return self._convert_to_time_domain(sources, end=self._full_audio_len)
@@ -284,15 +306,15 @@ class DuetBase(metaclass=ABCMeta):
         """
         self._last_audio = None
         del self._tf
-        del self._sym_atn
-        del self._delay
+        del self._alpha
+        del self._delta
         del self._tf_weights
 
 
     def compute_weights(self, x: ndarray) -> tuple[ndarray, ndarray, ndarray]:
         """
         Compute the weights for every point in the spectrogram along with the
-        symmetric attenuation and delay.
+        (symmetric) attenuation and delay.
 
         These are the first two and a half steps of the DUET algorithm.
 
@@ -306,10 +328,10 @@ class DuetBase(metaclass=ABCMeta):
         tf_weights : ndarray
             The weights for every point in the spectrogram, has shape (f, t) or
             (n_channels-1, f, t) if n_channels > 2.
-        sym_atn : ndarray
-            The symmetric attenuation, has shape (f, t) or (n_channels-1, f, t)
+        alpha : ndarray
+            The (symmetric) attenuation, has shape (f, t) or (n_channels-1, f, t)
             if n_channels > 2.
-        delay : ndarray
+        delta : ndarray
             The relative delay, has shape (f, t) or (n_channels-1, f, t) if
             n_channels > 2.
         """
@@ -392,11 +414,11 @@ class DuetBase(metaclass=ABCMeta):
         return self.stft.stft(x, p0=1)[:, 1:, :]
 
 
-    def _compute_attenuation_and_delay(self, tf: ndarray) -> tuple[ndarray, ndarray]:
+    def _compute_alpha_and_delta(self, tf: ndarray) -> tuple[ndarray, ndarray]:
         """
-        Calculate the relative symmetric attenuation (alpha) and delay (delta)
-        for each time/frequency point. This gives us phase and amplitude of the
-        left and right channels. Step 2 in the paper.
+        Calculate the relative (symmetric) attenuation (alpha) and delay
+        (delta) for each time/frequency point. This gives us phase and
+        amplitude of the left and right channels. Step 2 in the paper.
 
         This function supports any number of channels >= 2 by doing the pairwise
         computation of the attenuation and delay. The results are concatenated
@@ -410,7 +432,7 @@ class DuetBase(metaclass=ABCMeta):
         Returns
         -------
         alpha : ndarray
-            The symmetric attenuation, has shape (f, t) or (n_channels-1, f, t)
+            The (symmetric) attenuation, has shape (f, t) or (n_channels-1, f, t)
             if n_channels > 2.
         delta : ndarray
             The relative delay, has shape (f, t) or (n_channels-1, f, t)
@@ -425,19 +447,20 @@ class DuetBase(metaclass=ABCMeta):
                 freqs = self.frequencies_f32
 
             lr_ratio = (tf[1] + eps) / (tf[0] + eps)
-            a = np.abs(lr_ratio)
-            alpha = a - 1/a
+            alpha = np.abs(lr_ratio)
+            if self._use_sym_atn:
+                alpha = alpha - 1/alpha
             delta = -np.arctan2(lr_ratio.imag, lr_ratio.real) * (1 / freqs[:, None])
             # TODO: does this allow big delays?
             # do we need to adjust other params to compensate? different filter?
-            #sp.ndimage.uniform_filter(delta, 3, mode='wrap', output=delta)
+            # sp.ndimage.uniform_filter(delta, 5, mode='wrap', output=delta)
             return alpha, delta
         else:
             # Based on Speech Separation with Microphone Arrays using the Mean Shift Algorithm
             # (Ayllón, Gil-Pita, Manuel Rosa-Zurera, 2012)
             results = []
             for i in range(tf.shape[0]-1):
-                results.append(self._compute_attenuation_and_delay(tf[i:i+1, ...]))
+                results.append(self._compute_alpha_and_delta(tf[i:i+1, ...]))
             return np.concatenate(results, axis=0)  # type: ignore
 
 
@@ -495,25 +518,25 @@ class DuetBase(metaclass=ABCMeta):
         tf_weights : ndarray
             The weights for every point in the spectrogram, has shape (f, t) or
             (n_channels-1, f, t) if n_channels > 2.
-        sym_atn : ndarray
-            The symmetric attenuation, has shape (f, t) or (n_channels-1, f, t)
+        alpha : ndarray
+            The (symmetric) attenuation, has shape (f, t) or (n_channels-1, f, t)
             if n_channels > 2.
-        delay : ndarray
+        delta : ndarray
             The relative delay, has shape (f, t) or (n_channels-1, f, t) if
             n_channels > 2.
         """
         tf = self._construct_spectrogram(x)
-        sym_atn, delay = self._compute_attenuation_and_delay(tf)
+        alpha, delta = self._compute_alpha_and_delta(tf)
         tf_weights = self._compute_weights(tf)
-        return tf, tf_weights, sym_atn, delay
+        return tf, tf_weights, alpha, delta
 
 
     @abstractmethod
-    def _find_peaks(self, tf_weights: ndarray, sym_atn: ndarray, delay: ndarray
+    def _find_peaks(self, tf_weights: ndarray, alpha: ndarray, delta: ndarray
                     ) -> tuple[ndarray, ndarray]:
         """
         Find the peaks in the spectrogram. This is done by finding the local
-        maxima in the symmetric attenuation and delay.
+        maxima in the (symmetric) attenuation and delay.
 
         The actual implementation of this function is left to the subclasses, as
         different DUET algorithms may have different methods for finding the peaks.
@@ -523,25 +546,25 @@ class DuetBase(metaclass=ABCMeta):
         tf_weights : ndarray
             The weights for every point in the spectrogram, has shape (f, t) or
             (n_channels-1, f, t) if n_channels > 2.
-        sym_atn : ndarray
-            The symmetric attenuation, has shape (f, t) or (n_channels-1, f, t)
+        alpha : ndarray
+            The (symmetric) attenuation, has shape (f, t) or (n_channels-1, f, t)
             if n_channels > 2.
-        delay : ndarray
+        delta : ndarray
             The relative delay, has shape (f, t) or (n_channels-1, f, t) if
             n_channels > 2.
 
         Returns
         -------
-        sym_atn_peaks : ndarray
-            The peaks of symmetric attenuation, has shape (n_peaks,)
-        delay_peaks : ndarray
+        alpha_peaks : ndarray
+            The peaks of (symmetric) attenuation, has shape (n_peaks,)
+        delta_peaks : ndarray
             The peaks of delay, has shape (n_peaks,)
         """
         raise NotImplementedError("This method must be overridden by subclasses.")
 
 
-    def _find_peaks_update(self, tf_weights: ndarray, sym_atn: ndarray, delay: ndarray,
-                           tf_weights_new: ndarray, sym_atn_new: ndarray, delay_new: ndarray  #pylint: disable=unused-argument
+    def _find_peaks_update(self, tf_weights: ndarray, alpha: ndarray, delta: ndarray,
+                           tf_weights_new: ndarray, alpha_new: ndarray, delta_new: ndarray  #pylint: disable=unused-argument
                            ) -> tuple[ndarray, ndarray]:
         """
         Find peaks during an update step. This is given the full variables used
@@ -555,27 +578,27 @@ class DuetBase(metaclass=ABCMeta):
         tf_weights : ndarray
             The weights for every point in the spectrogram, has shape (f, t) or
             (n_channels-1, f, t) if n_channels > 2.
-        sym_atn : ndarray
-            The symmetric attenuation, has shape (f, t) or (n_channels-1, f, t)
+        alpha : ndarray
+            The (symmetric) attenuation, has shape (f, t) or (n_channels-1, f, t)
             if n_channels > 2.
-        delay : ndarray
+        delta : ndarray
             The relative delay, has shape (f, t) or (n_channels-1, f, t) if
             n_channels > 2.
         tf_weights_new : ndarray
             The new time-frequency representation weights.
-        sym_atn_new : ndarray
-            The new symmetric attenuation values.
-        delay_new : ndarray
+        alpha_new : ndarray
+            The new (symmetric) attenuation values.
+        delta_new : ndarray
             The new delay values.
 
         Returns
         -------
-        sym_atn_peaks : ndarray
-            The peaks of symmetric attenuation, has shape (n_peaks,)
-        delay_peaks : ndarray
+        alpha_peaks : ndarray
+            The peaks of (symmetric) attenuation, has shape (n_peaks,)
+        delta_peaks : ndarray
             The peaks of delay, has shape (n_peaks,)
         """
-        return self._find_peaks(tf_weights, sym_atn, delay)
+        return self._find_peaks(tf_weights, alpha, delta)
 
 
     def _convert_sym_to_atn(self, sym_atn: ndarray) -> ndarray:
@@ -600,7 +623,7 @@ class DuetBase(metaclass=ABCMeta):
             The STFT of the input signal, has shape (2, f, t), complex
         alphas : ndarray
             Peaks of attenuation, has shape (n_sources,)
-        delay_peak : ndarray
+        deltas : ndarray
             Peaks of delay, has shape (n_sources,)
 
         Returns

@@ -64,14 +64,14 @@ class DuetMS(DuetBase):
         return self._bandwidth
 
     @property
-    def attenuation_max(self) -> float:
-        """The maximum magnitude of symmetric attenuation to consider."""
-        return self._attenuation_max
+    def alpha_max(self) -> float:
+        """The maximum magnitude of (symmetric) attenuation to consider."""
+        return self._alpha_max
 
     @property
-    def delay_max(self) -> float:
-        """The maximum magnitude of delay to consider."""
-        return self._delay_max
+    def delta_max(self) -> float:
+        """The maximum magnitude of relative delay to consider."""
+        return self._delta_max
 
     @property
     def seed_count(self) -> int|None:
@@ -98,11 +98,12 @@ class DuetMS(DuetBase):
         """
         return self._convergence_tol
 
-    def __init__(self, sample_rate: int = 16000, *, window: int|ndarray = 256,
+    def __init__(self, sample_rate: int = 16000, *, window: int|ndarray = 256, oversample: int = 1,
                  threshold: float = 0.05, bandwidth: float|Sequence[float] = 0.2,
-                 attenuation_max: float = 0.7, delay_max: float = 3.6,
+                 alpha_max: float = 0.7, delta_max: float = 3.6,
                  seed_count: int|None = 25, min_bin_count: int = 1,
                  convergence_tol: float = 0.1,
+                 use_sym_atn: bool = True,
                  p: float = 1.0, q: float = 0.0):
         """
         Initialize the DUET algorithm with the given parameters.
@@ -121,6 +122,9 @@ class DuetMS(DuetBase):
 
             If 1024 with a 16 kHz sampling rate, this would be 64 ms for each time slice.
             If 256 with a 44.1 kHz sampling rate, this would be 5.8 ms for each time slice.
+        oversample : int
+            The oversampling factor for the STFT. Larger values will result in better time
+            resolution but worse frequency resolution. Default is 1 (no oversampling).
         threshold : float
             The threshold to filter the points in the spectrogram. The higher this value,
             the faster it will run, but it may also start moving the cluster centers around.
@@ -130,10 +134,10 @@ class DuetMS(DuetBase):
             value, a sequence of two values for each of alpha and delta, or many alphas and deltas
             for multichannel data. Larger values go faster but can easily start to merge clusters.
             Too small and it will begin to find lots of local minima. Default is 0.2.
-        attenuation_max : float
-            The maximum magnitude of symmetric attenuation to consider during seed generation,
+        alpha_max : float
+            The maximum magnitude of (symmetric) attenuation to consider during seed generation,
             default is 0.7.
-        delay_max : float
+        delta_max : float
             The maximum magnitude of delay to consider during seed generation, default is 3.6.
         seed_count : int|None
             Number of seeds to consider for mean-shift. If None, then all points are considered.
@@ -145,25 +149,28 @@ class DuetMS(DuetBase):
             The convergence tolerance for the mean-shift algorithm.
             Larger values go faster but can result in slightly off centroids.
             The default (0.1) is somewhat arbitrary (scikit-learn uses 0.001).
+        use_sym_atn : bool
+            Whether to use symmetric attenuation instead of attenuation. Default is True.
         p : float
             The symmetric attenuation estimator value weights, default is 1.
         q : float
             The delay estimator value weights, default is 0.
         """
-        super().__init__(sample_rate=sample_rate, window=window, p=p, q=q)
+        super().__init__(sample_rate=sample_rate, window=window, oversample=oversample,
+                         use_sym_atn=use_sym_atn, p=p, q=q)
         self._threshold = threshold
         self._bandwidth = bandwidth
-        self._attenuation_max = attenuation_max
-        self._delay_max = delay_max
+        self._alpha_max = alpha_max
+        self._delta_max = delta_max
         self._seed_count = seed_count
         self._min_bin_count = min_bin_count
         self._convergence_tol = convergence_tol
 
 
-    def _find_peaks(self, tf_weights: ndarray, sym_atn: ndarray, delay: ndarray
+    def _find_peaks(self, tf_weights: ndarray, alpha: ndarray, delta: ndarray
                     ) -> tuple[ndarray, ndarray]:
         n = tf_weights.shape[0] if tf_weights.ndim == 3 else 1
-        points, weights = self._get_points(tf_weights, sym_atn, delay)
+        points, weights = self._get_points(tf_weights, alpha, delta)
         bandwidths = self._bandwidths(n)
         seeds = get_seeds(points, bandwidths, self.min_bin_count, self.seed_count, self._bounds(n))
         if seeds.size == 0:
@@ -190,7 +197,7 @@ class DuetMS(DuetBase):
         weights : ndarray
             The weights of the points, has shape (f, t) or (n_channels-1, f, t)
         alpha : ndarray
-            The symmetric attenuation of the points, has shape (f, t) or
+            The (symmetric) attenuation of the points, has shape (f, t) or
             (n_channels-1, f, t)
         delta : ndarray
             The relative delay of the points, has shape (f, t) or
@@ -201,7 +208,7 @@ class DuetMS(DuetBase):
         points : ndarray
             The points to use for the mean-shift algorithm, has shape
             (n, 2) or (n, 2*n_channels-2). The first half of the columns are
-            the symmetric attenuation and the second half are the relative
+            the (symmetric) attenuation and the second half are the relative
             delay.
         weights : ndarray
             The weights of the points, has shape (n,)
@@ -226,7 +233,7 @@ class DuetMS(DuetBase):
         mask = weights > self.threshold
         # NOTE: should test this again, but it seems like the threshold method is more robust; even
         # without masking, these are already eliminated from the seeds, just not mean shift itself
-        mask &= (np.abs(alpha) < self.attenuation_max).all(0) & (np.abs(delta) < self.delay_max).all(0)
+        mask &= (np.abs(alpha) < self.alpha_max).all(0) & (np.abs(delta) < self.delta_max).all(0)
         points = points[:, mask]
         weights = weights[mask]
 
@@ -235,7 +242,7 @@ class DuetMS(DuetBase):
 
     @cache
     def _bounds(self, n: int = 1) -> ndarray:
-        a_max, d_max = self.attenuation_max, self.delay_max
+        a_max, d_max = self.alpha_max, self.delta_max
         bounds = [[-a_max, a_max]]*n + [[-d_max, d_max]]*n
         return np.array(bounds)
 
