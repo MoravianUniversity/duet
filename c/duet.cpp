@@ -138,8 +138,8 @@ struct DuetMeanShiftParams: public MeanShiftParams {
     static constexpr int dim = (N_CHANNELS-1)*2;
     static constexpr float bandwidth = 0.2f;
     //static constexpr std::array<float, 2> bandwidth = { 0.2f, 0.2f };
-    static constexpr std::array<float, 2> min_bounds = {-ATTENUATION_MAX, -DELAY_MAX};
-    static constexpr std::array<float, 2> max_bounds = { ATTENUATION_MAX,  DELAY_MAX};
+    static constexpr std::array<float, 2> min_bounds = {-ALPHA_MAX, -DELTA_MAX};
+    static constexpr std::array<float, 2> max_bounds = { ALPHA_MAX,  DELTA_MAX};
     static constexpr float convergence_tol = 0.1f;
     static constexpr int min_count = 3;
     static constexpr int top_n = 20;
@@ -601,7 +601,7 @@ void init_freqs_inv() {
  * and right channels. Step 2 of the DUET algorithm.
  * 
  * This function only works with two channels, to work with more than two
- * channels, use the `compute_atten_and_delay()` function.
+ * channels, use the `compute_alpha_and_delta()` function.
  * 
  * This only computes the values for the newest time slices (pass N_TIME to get
  * all time slices). This assumes that the `alpha` and `delta` arrays are
@@ -609,7 +609,7 @@ void init_freqs_inv() {
  * 
  * Requires `init_freqs_inv()` to be called before this function.
  */
-inline void OPTIMIZE_FOR_SPEED compute_atten_and_delay_2(
+inline void OPTIMIZE_FOR_SPEED compute_alpha_and_delta_2(
     const cfloat * const spectrogram, // in, shape (N_FREQ, N_TIME)
     const int new_times,
     float* alpha,                     // out, shape (N_FREQ, N_TIME)
@@ -658,7 +658,7 @@ inline void OPTIMIZE_FOR_SPEED compute_atten_and_delay_2(
  * and right channels. Step 2 of the DUET algorithm.
  * 
  * This function works with any number of channels (>=2) by calling the
- * `compute_atten_and_delay_2()` function for each pair of neighboring channels
+ * `compute_alpha_and_delta_2()` function for each pair of neighboring channels
  * based on:
  *   Speech Separation with Microphone Arrays using the Mean Shift Algorithm
  *   (Ayllón, Gil-Pita, Manuel Rosa-Zurera, 2012)
@@ -669,14 +669,14 @@ inline void OPTIMIZE_FOR_SPEED compute_atten_and_delay_2(
  * 
  * Requires `init_freqs_inv()` to be called before this function.
  */
-void OPTIMIZE_FOR_SPEED compute_atten_and_delay(
+void OPTIMIZE_FOR_SPEED compute_alpha_and_delta(
     const cfloat * const spectrogram, // in, shape (N_CHANNELS, N_FREQ, N_TIME)
     const int new_times,
     float* alpha,                     // out, shape (N_CHANNELS-1, N_FREQ, N_TIME)
     float* delta                      // out, shape (N_CHANNELS-1, N_FREQ, N_TIME)
 ) {
     for (int i = 0; i < N_CHANNELS-1; i++) {
-        compute_atten_and_delay_2(
+        compute_alpha_and_delta_2(
             &spectrogram[i*N_FREQ_TIME], new_times, &alpha[i*N_FREQ_TIME], &delta[i*N_FREQ_TIME]
         );
     }
@@ -701,7 +701,7 @@ void init_freqs_pow_q() {
  * step 3 of the DUET algorithm.
  *
  * This function only works with two channels, to work with more than two
- * channels, use the `compute_atten_and_delay()` function.
+ * channels, use the `compute_weights()` function.
  *
  * This only computes the values for the newest time slices (pass N_TIME to get
  * all time slices). This assumes that the `tf_weights` array is already rolled.
@@ -781,7 +781,7 @@ static void deinit_find_peaks() {
  * Get the mean-shift points from the spectrogram data.
  * This extracts the points from the spectrogram data that have a weight above
  * the POINT_THRESHOLD. It also checks that the alpha and delta values are
- * within the bounds of ATTENUATION_MAX and DELAY_MAX. The points are stored
+ * within the bounds of ALPHA_MAX and DELTA_MAX. The points are stored
  * in the `points` vector and the weights in the `weights` vector.
  */
 static void get_ms_points(
@@ -803,7 +803,7 @@ static void get_ms_points(
             float a = alpha_i[c*N_FREQ_TIME];
             float d = delta_i[c*N_FREQ_TIME];
             // Make sure the values are within the bounds
-            if (fabsf(a) > ATTENUATION_MAX || fabsf(d) > DELAY_MAX) { goto outer_continue; }
+            if (fabsf(a) > ALPHA_MAX || fabsf(d) > DELTA_MAX) { goto outer_continue; }
             point[c*2] = a;
             point[c*2+1] = d;
         }
@@ -1196,7 +1196,7 @@ void _process_audio_frame(const float * const frame) {
     roll2(alpha, (N_CHANNELS-1)*N_FREQ_TIME, 1);
     roll2(delta, (N_CHANNELS-1)*N_FREQ_TIME, 1);
     roll2(weights, (N_CHANNELS-1)*N_FREQ_TIME, 1);
-    compute_atten_and_delay(spectrogram, 2, alpha, delta);
+    compute_alpha_and_delta(spectrogram, 2, alpha, delta);
     compute_weights(spectrogram, 2, weights);
 
     // Find the peaks in the weights, alpha, and delta (i.e. the sources)

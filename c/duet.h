@@ -11,7 +11,7 @@
 // - REC_SAMPLE_RATE (default 48000)
 // - REC_CHANNELS (default 2, currently must be 2)
 // - REC_BITS_PER_SAMPLE (default 16, currently must be 16)
-// TODO: ATTENUATION_MAX, DELAY_MAX, bandwidths, and other mean-shift params
+// TODO: ALPHA_MAX, DELTA_MAX, bandwidths, and other mean-shift params
 
 
 #ifdef DUET_OFFLINE_PREPROCESS
@@ -107,14 +107,14 @@ typedef int esp_err_t;
 
 #endif
 
-// Min and max bounds for processing attenuation (alpha) values
-#ifndef ATTENUATION_MAX
-#define ATTENUATION_MAX 3.6f
+// Min and max bounds for processing (symmetric) attenuation (alpha) values
+#ifndef ALPHA_MAX
+#define ALPHA_MAX 3.6f  // this is (symmetric) attenuation, which becomes like like 0.26 to 3.86 once converted? // what units is this in?
 #endif
 
 // Min and max bounds for processing delay (delta) values
-#ifndef DELAY_MAX
-#define DELAY_MAX 3.6f  // TODO: or 0.7f?
+#ifndef DELTA_MAX
+#define DELTA_MAX 3.6f  // TODO: or 0.7f? // what units is this in?
 #endif
 
 #ifdef __cplusplus
@@ -217,7 +217,7 @@ int duet_get_audio_frame_size();
 //     int new_times,
 //     cfloat* out             // out, shape of (N_CHANNELS, N_FREQ, N_TIME)
 // );
-// void compute_atten_and_delay(
+// void compute_alpha_and_delta(
 //     const cfloat * const spectrogram, // in, shape (N_CHANNELS, N_FREQ, N_TIME)
 //     const int new_times,
 //     float* alpha,                     // out, shape (N_CHANNELS-1, N_FREQ, N_TIME)
