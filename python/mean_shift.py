@@ -44,21 +44,33 @@ def mean_shift(points: ndarray,
     if kernel is None: kernel = make_gaussian_kernel(bandwidth)
     centroids = get_seeds(points, bandwidth) if seeds is None else np.array(seeds)
 
-    # squared tolerance so we don't have to take the square root
+    # Squared tolerance so we don't have to take the square root
     tol_2 = bandwidth * bandwidth * convergence_tol * convergence_tol
+
+    # Bad centroids to remove (rare, but does happen)
+    remove = []
 
     for i, centroid in enumerate(centroids):  # can be parallelized
         dist_2 = np.inf
         while dist_2 > tol_2:
             # Shift the centroid
             weights = kernel(centroid, points)
-            p_new = (weights[:, None] * points).sum(0) / weights.sum()
+            weights_sum = weights.sum()
+            if weights_sum == 0:
+                # If no points are near the centroid at all, remove it
+                remove.append(i)
+                break
+            p_new = (weights[:, None] * points).sum(0) / weights_sum
 
             # Check if the point has converged
             dist_2 = euclidean_distance_2(p_new, centroid)
 
             # Update the centroid
             centroids[i] = p_new
+
+    # Remove bad centroids
+    if len(remove) > 0:
+        centroids = np.delete(centroids, remove, axis=0)
 
     # Combine all centroids that are close to each other
     return remove_near_duplicates(centroids, bandwidth)

@@ -288,6 +288,7 @@ public:
                 }
 
                 // Normalization factor (sum of weights)
+                if (w_sum == 0.0f) { mask[c] = true; break; } // no pts near centroid, remove it
                 float w_sum_inv = recip(w_sum);
                 for (int d = 0; d < dim; d++) { pt_new[d] *= w_sum_inv; }
 
