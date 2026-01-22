@@ -494,7 +494,7 @@ static inline __attribute__((always_inline)) OPTIMIZE_FOR_SPEED float carg_fast(
 }
 
 /**
- * Computes the imaginary exponential of x using fast trigronometry functions:
+ * Computes the imaginary exponential of x using fast trigonometry functions:
  *       iexp_fast(x) = cos(x) + i*sin(x)
  * See cexp_fast() for using any complex number.
  */
