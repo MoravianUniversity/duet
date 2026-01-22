@@ -1,0 +1,13 @@
+0.01 m / 340 m/s = 0.0000294 s = 0.0294 ms for sound to travel 1 cm
+
+1/16000 Hz = 0.0625 ms/sample
+1 sample                  = 0.0625 ms -> 2.144 cm travelled
+2 samples = 2 * 0.0625 ms = 0.1250 ms -> 4.288 cm travelled
+3 samples = 3 * 0.0625 ms = 0.1875 ms -> 6.432 cm travelled
+
+delay of at most 0.5 sample
+
+pi * 340 m/s / (2 * pi * 16000 Hz) =
+    340 m / (2 * 16000) = 0.010625 m = 1.0625 cm
+
+17 cm -> ~0.5 ms -> ~8 samples
