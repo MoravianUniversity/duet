@@ -10,7 +10,6 @@ are replaced with a specialized weighted mean-shift algorithm.
 
 Improvements that could be made:
  * Same as for DUET:
-    * "big delay" support
     * removal of scaling factors
     * general optimizations
  * Better "online" support (recomputes everything from scratch each time)
@@ -103,7 +102,8 @@ class DuetMS(DuetBase):
                  alpha_max: float = 0.7, delta_max: float = 3.6,
                  seed_count: int|None = 25, min_bin_count: int = 1,
                  convergence_tol: float = 0.1,
-                 use_sym_atn: bool = True,
+                 alpha_op: str = "symmetric", big_delay: str = "none",
+                 delta_smoothing: tuple[int, int] = (1, 1), delta_smoothing_mode: str = "mean",
                  p: float = 1.0, q: float = 0.0):
         """
         Initialize the DUET algorithm with the given parameters.
@@ -149,15 +149,25 @@ class DuetMS(DuetBase):
             The convergence tolerance for the mean-shift algorithm.
             Larger values go faster but can result in slightly off centroids.
             The default (0.1) is somewhat arbitrary (scikit-learn uses 0.001).
-        use_sym_atn : bool
-            Whether to use symmetric attenuation instead of attenuation. Default is True.
+        alpha_op : str
+            The type of alpha operation to use, can be "symmetric" (a-1/a), "log" (log a), or
+            "none". Default is "symmetric".
+        big_delay : str
+            The type of big delay algorithm to use, can be "diff" or "none". Default is "none".
+        delta_smoothing : tuple[int, int]
+            The size of the smoothing filter for the delay estimator, as a tuple of (freq, time).
+            Default is (1, 1) (no smoothing).
+        delta_smoothing_mode : str
+            The type of smoothing to apply to the delay estimator, can be "mean", "median", or
+            "gaussian". Default is "mean".
         p : float
             The symmetric attenuation estimator value weights, default is 1.
         q : float
             The delay estimator value weights, default is 0.
         """
         super().__init__(sample_rate=sample_rate, window=window, oversample=oversample,
-                         use_sym_atn=use_sym_atn, p=p, q=q)
+                         alpha_op=alpha_op, big_delay=big_delay, delta_smoothing=delta_smoothing,
+                         delta_smoothing_mode=delta_smoothing_mode, p=p, q=q)
         self._threshold = threshold
         self._bandwidth = bandwidth
         self._alpha_max = alpha_max

@@ -12,9 +12,6 @@ code).
 Additionally, it has additions for online processing and multiple channels.
 
 Improvements that could be made:
- * Implement the "big delay" versions from section 8.4 (try both differential and tiling). This
-   allows microphones to be placed further apart and still work. One of those two methods is used
-   in followup papers. Neither is in the published MATLAB code.
  * Alternative peak finding algorithms such as weighted k-means, model-based peak removal, and
    peak tracking (https://www.researchgate.net/publication/2551938_Real-Time_Time-Frequency_Based_Blind_Source_Separation)
    Also could use something more general like at https://stackoverflow.com/questions/3684484/peak-detection-in-a-2d-array
@@ -53,9 +50,27 @@ class DuetBase(metaclass=ABCMeta):
         return self._q
 
     @property
-    def use_sym_atn(self) -> bool:
-        """Whether to use symmetric attenuation for alpha or regular attenuation."""
-        return self._use_sym_atn
+    def alpha_op(self) -> str:
+        """
+        The type of alpha operation to use, can be "symmetric" (a-1/a), "log" (log a), or "none".
+        Default is "symmetric".
+        """
+        return self._alpha_op
+    
+    @property
+    def big_delay(self) -> str:
+        """The type of big delay algorithm to use, can be "diff" or "none"."""
+        return self._big_delay
+    
+    @property
+    def delta_smoothing(self) -> tuple[int, int]:
+        """The size of the smoothing filter for the delay estimator, as a tuple of (freq, time)."""
+        return self._delta_smoothing
+
+    @property
+    def delta_smoothing_mode(self) -> str:
+        """The type of smoothing to apply to the delay estimator, can be "mean", "median", or "gaussian"."""
+        return self._delta_smoothing_mode
 
     @property
     def stft(self) -> sp.signal.ShortTimeFFT:
@@ -106,7 +121,9 @@ class DuetBase(metaclass=ABCMeta):
 
 
     def __init__(self, sample_rate: int = 16000, *, window: int|ndarray = 256, oversample: int = 1,
-                 use_sym_atn: bool = True, p: float = 1.0, q: float = 0.0):
+                 alpha_op: str = "symmetric", big_delay: str = "none",
+                 delta_smoothing: tuple[int, int] = (1, 1), delta_smoothing_mode: str = "mean",
+                 p: float = 1.0, q: float = 0.0):
         """
         Initialize the DUET algorithm with the given parameters.
 
@@ -127,16 +144,31 @@ class DuetBase(metaclass=ABCMeta):
         oversample : int
             The oversampling factor for the STFT. Larger values will result in better time
             resolution but worse frequency resolution. Default is 1 (no oversampling).
-        use_sym_atn : bool
-            Whether to use symmetric attenuation for alpha or regular attenuation. Default is True.
+        alpha_op : str
+            The type of alpha operation to use, can be "symmetric" (a-1/a), "log" (log a), or
+            "none". Default is "symmetric".
+        big_delay : str
+            The type of big delay algorithm to use, can be "diff" or "none". Default is "none".
+        delta_smoothing : tuple[int, int]
+            The size of the smoothing filter for the delay estimator, as a tuple of (freq, time).
+            Default is (1, 1) (no smoothing).
+        delta_smoothing_mode : str
+            The type of smoothing to apply to the delay estimator, can be "mean", "median", or
+            "gaussian". Default is "mean".
         p : float
             The symmetric attenuation estimator value weights, default is 1.
         q : float
             The delay estimator value weights, default is 0.
         """
+        if alpha_op not in ("symmetric", "log", "none"):
+            raise ValueError("alpha_op must be one of 'symmetric', 'log', or 'none'.")
+
         self._p = p
         self._q = q
-        self._use_sym_atn = use_sym_atn
+        self._alpha_op = alpha_op
+        self._big_delay = big_delay
+        self._delta_smoothing = delta_smoothing
+        self._delta_smoothing_mode = delta_smoothing_mode
 
         if isinstance(window, int):
             window_length = window
@@ -173,9 +205,8 @@ class DuetBase(metaclass=ABCMeta):
         alpha_peaks, delta_peaks = self._find_peaks(tf_weights, alpha, delta)
         if len(alpha_peaks) == 0:
             return x
-        
-        if self._use_sym_atn:
-            alpha_peaks = self._convert_sym_to_atn(alpha_peaks)
+
+        alpha_peaks = self._convert_alpha_to_atn(alpha_peaks)
         best, sources = self._compute_sources(tf, alpha_peaks, delta_peaks)
         sources = self._demix(best, sources)
         return self._convert_to_time_domain(sources, end=x.shape[-1])
@@ -222,8 +253,7 @@ class DuetBase(metaclass=ABCMeta):
             return x
 
         # The end is the same as regular
-        if self._use_sym_atn:
-            alpha_peaks = self._convert_sym_to_atn(alpha_peaks)
+        alpha_peaks = self._convert_alpha_to_atn(alpha_peaks)
         best, sources = self._compute_sources(tf, alpha_peaks, delta_peaks)
         sources = self._demix(best, sources)
         return self._convert_to_time_domain(sources, end=x.shape[-1])
@@ -287,8 +317,7 @@ class DuetBase(metaclass=ABCMeta):
             return self._convert_to_time_domain(tf, end=self._full_audio_len) if return_full else x
 
         # The end is the same as regular
-        if self._use_sym_atn:
-            alpha_peaks = self._convert_sym_to_atn(alpha_peaks)
+        alpha_peaks = self._convert_alpha_to_atn(alpha_peaks)
         best, sources = self._compute_sources(tf, alpha_peaks, delta_peaks)
         sources = self._demix(best, sources)
         if return_full:
@@ -439,21 +468,17 @@ class DuetBase(metaclass=ABCMeta):
             if n_channels > 2.
         """
         if tf.shape[0] == 2:
-            if tf.dtype == np.complex128:
-                eps = EPS
-                freqs = self.frequencies
-            else:
-                eps = EPS_F32
-                freqs = self.frequencies_f32
-
+            eps = EPS if tf.dtype == np.complex128 else EPS_F32
             lr_ratio = (tf[1] + eps) / (tf[0] + eps)
-            alpha = np.abs(lr_ratio)
-            if self._use_sym_atn:
-                alpha = alpha - 1/alpha
-            delta = -np.arctan2(lr_ratio.imag, lr_ratio.real) * (1 / freqs[:, None])
-            # TODO: does this allow big delays?
-            # do we need to adjust other params to compensate? different filter?
-            # sp.ndimage.uniform_filter(delta, 5, mode='wrap', output=delta)
+            alpha = self._convert_atn_to_alpha(np.abs(lr_ratio))
+            delta = self._convert_delay_to_delta(np.angle(lr_ratio)) # = arctan2(i, r)
+            if self._delta_smoothing != (1, 1):
+                if self._delta_smoothing_mode == "mean":
+                    delta = sp.ndimage.uniform_filter(delta, self._delta_smoothing, mode='nearest')
+                elif self._delta_smoothing_mode == "median":
+                    delta = sp.ndimage.median_filter(delta, self._delta_smoothing, mode='nearest')
+                elif self._delta_smoothing_mode == "gaussian":
+                    delta = sp.ndimage.gaussian_filter(delta, self._delta_smoothing, mode='nearest')
             return alpha, delta
         else:
             # Based on Speech Separation with Microphone Arrays using the Mean Shift Algorithm
@@ -601,9 +626,42 @@ class DuetBase(metaclass=ABCMeta):
         return self._find_peaks(tf_weights, alpha, delta)
 
 
-    def _convert_sym_to_atn(self, sym_atn: ndarray) -> ndarray:
-        """Convert the symmetric attenuation to attenuation."""
-        return 0.5 * (sym_atn + np.sqrt(sym_atn*sym_atn + 4))
+    def _convert_delay_to_delta(self, angles: ndarray) -> ndarray:
+        """Convert the delay angles to deltas using the chosen big-delay method."""
+        if self._big_delay == "diff":
+            # from Wang, Yilmax, and Zhou 2013
+            # hinted at in the original paper but not implemented
+            factor = (self.oversample * self.window_length) / (2*np.pi)
+            # TODO: empirically, there is a shift here, not just a factor - maybe prepend instead of append? maybe just add the shift?
+            diff = -np.diff(angles, axis=0, append=np.pi)  # TODO: check append value
+            return factor * ((diff + np.pi) % (2 * np.pi) - np.pi)  # TODO: do we need the +pi and -pi here?
+        else:
+            # original paper
+            freqs = self.frequencies if angles.dtype == np.float64 else self.frequencies_f32
+            return -angles * (1 / freqs[:, None])
+
+
+    def _convert_atn_to_alpha(self, atn: ndarray) -> ndarray:
+        """Convert the attenuation to alpha using the alpha-op."""
+        if self._alpha_op == "symmetric":
+            # original (and most) papers
+            return atn - 1/atn
+        elif self._alpha_op == "log":
+            # used in Wang, Yilmax, and Zhou 2013
+            return np.log(atn)
+        else:  # self._alpha_op == "none":
+            # never used
+            return atn
+
+
+    def _convert_alpha_to_atn(self, alpha: ndarray) -> ndarray:
+        """Convert the alpha to attenuation using the inverse of the alpha-op."""
+        if self._alpha_op == "symmetric":
+            return 0.5 * (alpha + np.sqrt(alpha*alpha + 4))
+        elif self._alpha_op == "log":
+            return np.exp(alpha)
+        else:  # self._alpha_op == "none":
+            return alpha
 
 
     def _compute_sources(self, tf: ndarray, alphas: ndarray, deltas: ndarray) -> \
