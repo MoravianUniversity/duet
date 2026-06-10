@@ -20,6 +20,9 @@ Improvements that could be made:
    prominences to find).
  * General optimizations to reduce array allocations and shared math.
  * All of the parameters of the __init__ method, particularly the window length.
+
+TODO:
+ * Weighted delta smoothing using tf_weights?
 """
 
 from abc import abstractmethod, ABCMeta
@@ -162,6 +165,10 @@ class DuetBase(metaclass=ABCMeta):
         """
         if alpha_op not in ("symmetric", "log", "none"):
             raise ValueError("alpha_op must be one of 'symmetric', 'log', or 'none'.")
+        if big_delay not in ("diff", "none"):
+            raise ValueError("big_delay must be one of 'diff' or 'none'.")
+        if delta_smoothing_mode not in ("mean", "median", "gaussian"):
+            raise ValueError("delta_smoothing_mode must be one of 'mean', 'median', or 'gaussian'.")
 
         self._p = p
         self._q = q

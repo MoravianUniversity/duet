@@ -9,12 +9,12 @@ but steps 3 and 4 (construction of the weighted histogram and finding the peaks)
 are replaced with a specialized weighted mean-shift algorithm.
 
 Improvements that could be made:
- * Same as for DUET:
-    * removal of scaling factors
-    * general optimizations
+ * Same as for DUET
  * Better "online" support (recomputes everything from scratch each time)
  * Alternative seed generation methods (like using the previous mean-shift
-   centroids along with some grid points from new data)
+   centroids along with some grid points from new data, or a simple peak-finding
+   method to find local maxima in the data)
+ * Try including frequency/time information in the mean-shift points
 
 Should Tune:
  * All of the parameters of the __init__ method, particularly the window length
@@ -27,7 +27,7 @@ Should Tune:
 """
 
 from functools import cache
-from typing import Sequence
+from collections.abc import Sequence
 
 import numpy as np
 from numpy import ndarray
@@ -40,6 +40,7 @@ class DuetMS(DuetBase):
     """
     DUET with Mean-Shifting algorithm implementation.
     """
+
     _force_stereo = False  # supports multichannel data
 
     @property
@@ -177,7 +178,7 @@ class DuetMS(DuetBase):
         self._convergence_tol = convergence_tol
 
 
-    def _find_peaks(self, tf_weights: ndarray, alpha: ndarray, delta: ndarray
+    def _find_peaks(self, tf_weights: ndarray, alpha: ndarray, delta: ndarray,
                     ) -> tuple[ndarray, ndarray]:
         n = tf_weights.shape[0] if tf_weights.ndim == 3 else 1
         points, weights = self._get_points(tf_weights, alpha, delta)
@@ -196,7 +197,7 @@ class DuetMS(DuetBase):
             return centroids[0, :], centroids[1, :]
 
 
-    def _get_points(self, weights: ndarray, alpha: ndarray, delta: ndarray
+    def _get_points(self, weights: ndarray, alpha: ndarray, delta: ndarray,
                     ) -> tuple[ndarray, ndarray]:
         """
         Get the points weights for the mean-shift algorithm. This filters the
