@@ -1,5 +1,6 @@
 import os
 import re
+import sys
 import random
 import time
 from multiprocessing import Pool
@@ -148,7 +149,8 @@ def init_data():
         attenuations = [compute_attenuation(a) for a in sym_attens]
 
         # Information about the sources for debugging
-        print([(seg_dict[int(re.findall(r'\d+', f)[0])], a, d) for f, a, d in zip(selected_files, attenuations, delays)])
+        print([(seg_dict[int(re.findall(r'\d+', f)[0])], s, a, d)
+               for f, s, a, d in zip(selected_files, starts, attenuations, delays)])
 
         # Generate stereo channels
         # TODO: delays should be able to read forward/backward in audio (right now I believe it just fills in with 0s)
@@ -167,10 +169,14 @@ def check_params(params):
     #    even the best solutions can be missing some of the true sources
     # maybe use some other form of mean? double count max?
     start = time.time()
-    preds = [find_alpha_deltas(d[0], **params) for d in DATA]
-    elapsed = (time.time() - start) / len(DATA)
-    cur_scores = [score_alpha_deltas(d[1:], pred) for d, pred in zip(DATA, preds)]
-    return rmse(cur_scores), elapsed
+    try:
+        preds = [find_alpha_deltas(d[0], **params) for d in DATA]
+        elapsed = (time.time() - start) / len(DATA)
+        cur_scores = [score_alpha_deltas(d[1:], pred) for d, pred in zip(DATA, preds)]
+        return rmse(cur_scores), elapsed
+    except Exception as e:
+        print(f"Error occurred while evaluating params {params}: {e}", file=sys.stderr)
+        return np.nan, np.nan
 
 def main():
     # Run all parameter combinations
