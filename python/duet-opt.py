@@ -26,6 +26,10 @@ MAX_ATTEN = 1          # maximum symmetric attenuation
 
 DATA = []
 
+NUM_CORES = os.cpu_count() // 2
+
+OUTPUT_FILENAME = "duet_opt_results.csv"
+
 grid = {
     # Audio Lengths to try (in ms)
     # Original target was 96ms, must be multiple of 16ms
@@ -184,26 +188,32 @@ def main():
     scores = []
     times = []
     overall_start = time.time()
-    with Pool(os.cpu_count() // 2, init_data) as pool:
+    with Pool(NUM_CORES, init_data) as pool:
         for i, (score, elapsed) in enumerate(pool.imap(check_params, param_grid, 100)):
-            if i % 100 == 0 and i > 0:
+            if i % 1000 == 0 and i > 0:
+                # Print progress
                 elapsed = time.time() - overall_start
                 perc = i / len(param_grid)
-                per = elapsed / i
-                print(f"Evaluating {i}/{len(param_grid)} {perc:.1%}; {per:.2f}s per eval; est remaining {per*(len(param_grid)-i)/60:.1f} min; best so far: {min(scores):.2f}")
+                per = elapsed / i * 1000
+                print(f"Evaluating {i}/{len(param_grid)} {perc:.1%}; {round(per)}ms per eval; est remaining {per*(len(param_grid)-i)/(60*1000):.1f} min; best so far: {min(scores):.2f}")
                 # Save results
                 results = pd.DataFrame()
                 results["score"] = scores
                 results["time"] = times
-                results.to_csv("duet_opt_results.csv", index=False)
+                results.to_csv(OUTPUT_FILENAME, index=False)
             scores.append(score)
             times.append(elapsed)
+
+    # Final message
+    elapsed = time.time() - overall_start
+    per = elapsed / len(param_grid) * 1000
+    print(f"Done; {round(per)}ms per eval; total time: {elapsed/60:.1f} min; best score: {min(scores):.2f}")
 
     # Save results
     results = pd.DataFrame(param_grid)
     results["score"] = scores
     results["time"] = times
-    results.to_csv("duet_opt_results.csv", index=False)
+    results.to_csv(OUTPUT_FILENAME, index=False)
 
 if __name__ == "__main__":
     main()
