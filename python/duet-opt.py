@@ -14,10 +14,12 @@ from sklearn.model_selection import ParameterGrid
 from source_generation import compute_attenuation, combine_sources, load_wav_files
 from duet_ms import DuetMS
 
+SAMPLE_RATE = 16000    # sample rate of audio
+
 NUM_SAMPLES = 10       # number of audio samples to generate
 MIN_AUDIO_SUBSAMPLES = 2 # minimum number of audio subsamples to combine into a single sample
 MAX_AUDIO_SUBSAMPLES = 2 # maximum number of audio subsamples to combine into a single sample
-PAD_LENGTH = 1600      # 100ms at 16kHz - avoid the beginning and end of the audio samples
+PAD_LENGTH = 800       # 50ms at 16kHz - avoid the beginning and end of the audio samples
 SEGMENT_LENGTH = 4800  # 300ms at 16kHz (>144*2) - length of audio segments to use for evaluation
 MIN_DELAY = -8         # minimum delay in samples
 MAX_DELAY = 8          # maximum delay in samples
@@ -103,7 +105,7 @@ grid = {
     "delta_smoothing_mode": ["mean", "median", "gaussian"],
 }
 
-def find_alpha_deltas(x: np.ndarray, fs: int = 16000, **params):
+def find_alpha_deltas(x: np.ndarray, fs: int = SAMPLE_RATE, **params):
     audio_length = params.pop("audio_length")
     x = x[:, :audio_length*fs//1000]
     duet = DuetMS(fs, **params)
