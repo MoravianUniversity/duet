@@ -1,4 +1,5 @@
 import os
+import re
 import random
 import time
 from multiprocessing import Pool
@@ -11,6 +12,16 @@ from sklearn.model_selection import ParameterGrid
 
 from source_generation import compute_attenuation, combine_sources, load_wav_files
 from duet_ms import DuetMS
+
+NUM_SAMPLES = 10       # number of audio samples to generate
+MIN_AUDIO_SUBSAMPLES = 2 # minimum number of audio subsamples to combine into a single sample
+MAX_AUDIO_SUBSAMPLES = 2 # maximum number of audio subsamples to combine into a single sample
+PAD_LENGTH = 1600      # 100ms at 16kHz - avoid the beginning and end of the audio samples
+SEGMENT_LENGTH = 4800  # 300ms at 16kHz (>144*2) - length of audio segments to use for evaluation
+MIN_DELAY = -8         # minimum delay in samples
+MAX_DELAY = 8          # maximum delay in samples
+MIN_ATTEN = -1         # minimum symmetric attenuation
+MAX_ATTEN = 1          # maximum symmetric attenuation
 
 DATA = []
 
@@ -89,7 +100,7 @@ grid = {
 
 def find_alpha_deltas(x: np.ndarray, fs: int = 16000, **params):
     audio_length = params.pop("audio_length")
-    x = x[:audio_length*fs//1000]
+    x = x[:, :audio_length*fs//1000]
     duet = DuetMS(fs, **params)
     xx = duet._normalize_data(x)
     _, tf_weights, alpha, delta = duet._compute_all(xx)
@@ -115,23 +126,32 @@ def init_data():
     base_dir = "FOAMS_processed_audio"
 
     #load segmentation_info and create a dictionary
-    #seg_info = pd.read_csv("segmentation_info.csv")
-    #seg_dict = dict(zip(seg_info['id'], seg_info['label']))
+    seg_info = pd.read_csv("segmentation_info.csv")
+    seg_dict = dict(zip(seg_info['id'], seg_info['label']))
     all_sources = load_wav_files(base_dir)
 
     # Generate samples
-    num_sources = 2
     rand = random.Random(42)
-    for _ in range(10):
+    for _ in range(NUM_SAMPLES):
+        num_sources = rand.randint(MIN_AUDIO_SUBSAMPLES, MAX_AUDIO_SUBSAMPLES)
         sources = rand.sample(all_sources, num_sources)
+        selected_files = [s[0] for s in sources]
         sources = [s[1] for s in sources]
 
+        # Take random segments
+        starts = [rand.randint(PAD_LENGTH, len(s) - PAD_LENGTH - SEGMENT_LENGTH) for s in sources]
+        sources = [s[start:start + SEGMENT_LENGTH] for s, start in zip(sources, starts)]
+
         # Create test delays/attenuations
-        delays = [rand.uniform(-8, 8) for _ in sources]
-        sym_attens = [rand.uniform(-1, 1) for _ in sources]
+        delays = [rand.uniform(MIN_DELAY, MAX_DELAY) for _ in sources]
+        sym_attens = [rand.uniform(MIN_ATTEN, MAX_ATTEN) for _ in sources]
         attenuations = [compute_attenuation(a) for a in sym_attens]
 
+        # Information about the sources for debugging
+        print([(seg_dict[int(re.findall(r'\d+', f)[0])], a, d) for f, a, d in zip(selected_files, attenuations, delays)])
+
         # Generate stereo channels
+        # TODO: delays should be able to read forward/backward in audio (right now I believe it just fills in with 0s)
         audio = combine_sources(sources, delays, attenuations)
 
         DATA.append((audio, attenuations, delays))
