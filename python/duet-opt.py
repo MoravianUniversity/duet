@@ -190,10 +190,10 @@ def check_params(params):
 
 def main():
     # Run all parameter combinations
-    param_grid = list(ParameterGrid(grid))
+    param_grid = ParameterGrid(grid)
+    param_grid_df = pd.DataFrame(param_grid)
     scores = []
     times = []
-    params_list = []
     overall_start = time.time()
     with Pool(NUM_CORES, init_data) as pool:
         for i, (score, elapsed) in enumerate(pool.imap(check_params, param_grid, 100)):
@@ -204,13 +204,12 @@ def main():
                 per = elapsed / i * 1000
                 print(f"Evaluating {i}/{len(param_grid)} {perc:.1%}; {round(per)}ms per eval; est remaining {per*(len(param_grid)-i)/(60*1000):.1f} min; best so far: {min(scores):.2f}")
                 # Save results
-                results = pd.DataFrame(params_list)
+                results = param_grid_df.iloc[:i]
                 results["score"] = scores
                 results["time"] = times
                 results.to_csv(OUTPUT_FILENAME, index=False)
             scores.append(score)
             times.append(elapsed)
-            params_list.append(param_grid[i])
 
     # Final message
     elapsed = time.time() - overall_start
@@ -218,7 +217,7 @@ def main():
     print(f"Done; {round(per)}ms per eval; total time: {elapsed/60:.1f} min; best score: {min(scores):.2f}")
 
     # Save results
-    results = pd.DataFrame(params_list)
+    results = param_grid_df
     results["score"] = scores
     results["time"] = times
     results.to_csv(OUTPUT_FILENAME, index=False)
