@@ -26,9 +26,9 @@ MAX_DELAY = 8          # maximum delay in samples
 MIN_ATTEN = -1         # minimum symmetric attenuation
 MAX_ATTEN = 1          # maximum symmetric attenuation
 
-DATA = []
+DATA: list[tuple[np.ndarray, np.ndarray, np.ndarray]] = []
 
-NUM_CORES = os.cpu_count() // 2
+NUM_CORES = os.process_cpu_count() // 2
 
 OUTPUT_FILENAME = "duet_opt_results.csv"
 
@@ -109,31 +109,50 @@ grid = {
     "q": [0, 2],
 }
 
-def find_alpha_deltas(x: np.ndarray, fs: int = SAMPLE_RATE, **params):
+def find_alpha_deltas(x: np.ndarray, fs: int = 16000, **params):
+    """
+    Find alpha and delta peaks for given audio and DUET parameters.
+    """
+    # Extract audio length and trim audio
     audio_length = params.pop("audio_length")
     x = x[:, :audio_length*fs//1000]
+
+    # Initialize DUET and compute peaks
     duet = DuetMS(fs, **params)
     xx = duet._normalize_data(x)
     _, tf_weights, alpha, delta = duet._compute_all(xx)
     alpha_peaks, delta_peaks = duet._find_peaks(tf_weights, alpha, delta)
     alpha_peaks = duet._convert_alpha_to_atn(alpha_peaks)
+
+    # Return results
     return alpha_peaks, delta_peaks
 
 def rmse(val):
+    """
+    Compute root mean square error of given values.
+    """
     return np.sqrt(np.mean(np.multiply(val, val)))
 
 def score_alpha_deltas(true, pred):
+    """
+    Score predicted alpha and delta values against true values.
+    """
     true = np.transpose(true)
     pred = np.transpose(pred)
     if len(true) == 0 or len(pred) == 0:
         return float('inf')
     dists = sp.spatial.distance_matrix(true, pred)
-    #return (rmse(dists.min(1)) + rmse(dists.min(0))) * (0.01 * np.exp(len(pred) - 5*len(true)) + 1)  # as we get 5 times more predictions than true sources, we start penalizing majorly
+
+    # TODO: try other scoring methods
     min1 = dists.min(1)
     min0 = dists.min(0)
-    return rmse(min1) + rmse(min0) + max(min1.max(), min0.max())
+    return (rmse(min1) + rmse(min0)) * (0.01 * np.exp(len(pred) - 5*len(true)) + 1)  # as we get 5 times more predictions than true sources, we start penalizing majorly
+    # return rmse(min1) + rmse(min0) + max(min1.max(), min0.max())
 
 def init_data():
+    """
+    Initialize data. Loads audio files and generates samples.
+    """
     base_dir = "FOAMS_processed_audio"
 
     #load segmentation_info and create a dictionary
@@ -168,21 +187,26 @@ def init_data():
 
         DATA.append((audio, attenuations, delays))
 
-def check_params(params):
-    # overall scoring: RMSE or all individual scores
+def check_params(params: dict, data: list[tuple[np.ndarray, np.ndarray, np.ndarray]] = DATA) -> tuple[float, float]:
+    """
+    Check a given set of DUET parameters by scoring them on the entire test data.
+
+    Returns the overall RMSE score and the average time taken per sample.
+    """
+    # overall scoring: RMSE of all individual scores
     # individual scores: addition of:
     #    take RMSE of L2 distances between every predicted value and the closest true value - makes sure that every prediction is close to a true source
     #    take RMSE of L2 distances between every true value and the closest predicted value - makes sure that every true source is close to a prediction
-    # problems are though that:
+    # TODO: problems are though that:
     #    it favors many more predictions than true sources because they average out the bad ones
     #    it doesn't penalize far away predictions as much as it should if there are enough close ones
     #    even the best solutions can be missing some of the true sources
     # maybe use some other form of mean? double count max?
     start = time.time()
     try:
-        preds = [find_alpha_deltas(d[0], **params) for d in DATA]
-        elapsed = (time.time() - start) / len(DATA)
-        cur_scores = [score_alpha_deltas(d[1:], pred) for d, pred in zip(DATA, preds)]
+        preds = [find_alpha_deltas(d[0], **params) for d in data]
+        elapsed = (time.time() - start) / len(data)
+        cur_scores = [score_alpha_deltas(d[1:], pred) for d, pred in zip(data, preds)]
         return rmse(cur_scores), elapsed
     except Exception as e:
         print(f"Error occurred while evaluating params {params}: {e}", file=sys.stderr)
