@@ -168,22 +168,22 @@ def init_data():
         selected_files = [s[0] for s in sources]
         sources = [s[1] for s in sources]
 
-        # Take random segments
-        starts = [rand.randint(PAD_LENGTH, len(s) - PAD_LENGTH - SEGMENT_LENGTH) for s in sources]
-        sources = [s[start:start + SEGMENT_LENGTH] for s, start in zip(sources, starts)]
-
         # Create test delays/attenuations
         delays = [rand.uniform(MIN_DELAY, MAX_DELAY) for _ in sources]
         sym_attens = [rand.uniform(MIN_ATTEN, MAX_ATTEN) for _ in sources]
         attenuations = [compute_attenuation(a) for a in sym_attens]
+        max_delay = max(abs(d) for d in delays)
+
+        # Take random segments
+        starts = [rand.randint(PAD_LENGTH, len(s) - PAD_LENGTH - SEGMENT_LENGTH) for s in sources]
+        sources = [s[start-max_delay:start+SEGMENT_LENGTH+max_delay] for s, start in zip(sources, starts)]
 
         # Information about the sources for debugging
         print([(seg_dict[int(re.findall(r'\d+', f)[0])], s, a, d)
                for f, s, a, d in zip(selected_files, starts, attenuations, delays)])
 
         # Generate stereo channels
-        # TODO: delays should be able to read forward/backward in audio (right now I believe it just fills in with 0s)
-        audio = combine_sources(sources, delays, attenuations)
+        audio = combine_sources(sources, delays, attenuations)[max_delay:-max_delay]
 
         DATA.append((audio, attenuations, delays))
 
