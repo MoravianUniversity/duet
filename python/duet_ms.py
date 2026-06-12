@@ -89,6 +89,17 @@ class DuetMS(DuetBase):
         Larger values go faster but can result in missing clusters.
         """
         return self._min_bin_count
+    
+    @property
+    def max_filter_size(self) -> tuple[int]|int|None:
+        """
+        The maximum filter size to use for mean-shift seed selection.
+        Must be None (for no filtering) or odd integers >1 for filtering.
+        Remove possible seeds that are not local maxima within max_filter_size; this can help speed
+        up results a lot by removing seeds. As this is increased, seed_count should be decreased or
+        min_bin_count increased to prevent finding random local maxima that are not sources.
+        """
+        return self._max_filter_size
 
     @property
     def convergence_tol(self) -> float:
@@ -102,6 +113,7 @@ class DuetMS(DuetBase):
                  threshold: float = 0.05, bandwidth: float|Sequence[float] = 0.2,
                  alpha_max: float = 0.7, delta_max: float = 3.6,
                  seed_count: int|None = 25, min_bin_count: int = 1,
+                 max_filter_size: tuple[int]|int|None = None,
                  convergence_tol: float = 0.1,
                  alpha_op: str = "symmetric", big_delay: str = "none",
                  delta_smoothing: tuple[int, int] = (1, 1), delta_smoothing_mode: str = "mean",
@@ -146,6 +158,9 @@ class DuetMS(DuetBase):
         min_bin_count : int
             The minimum number of points in a bin to consider it as a seed.
             Larger values go faster but can result in missing clusters. Default is 1.
+        max_filter_size : tuple[int]|int|None
+            The maximum filter size to use for mean-shift seed selection. Must be None (for no
+            filtering) or odd integers >1 for filtering. Default is None.
         convergence_tol : float
             The convergence tolerance for the mean-shift algorithm.
             Larger values go faster but can result in slightly off centroids.
@@ -175,6 +190,7 @@ class DuetMS(DuetBase):
         self._delta_max = delta_max
         self._seed_count = seed_count
         self._min_bin_count = min_bin_count
+        self._max_filter_size = max_filter_size
         self._convergence_tol = convergence_tol
 
 
@@ -183,7 +199,11 @@ class DuetMS(DuetBase):
         n = tf_weights.shape[0] if tf_weights.ndim == 3 else 1
         points, weights = self._get_points(tf_weights, alpha, delta)
         bandwidths = self._bandwidths(n)
-        seeds = get_seeds(points, bandwidths, self.min_bin_count, self.seed_count, self._bounds(n))
+        seeds = get_seeds(points, bandwidths,
+                          min_count=self.min_bin_count,
+                          top_n=self.seed_count,
+                          max_filter_size=self.max_filter_size,
+                          bounds=self._bounds(n))
         if seeds.size == 0:
             # No seeds found, return empty arrays
             empty = np.empty((weights.shape[0], 0)) if tf_weights.ndim == 3 else np.empty((0,))

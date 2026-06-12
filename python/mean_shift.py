@@ -8,6 +8,7 @@ from typing import Sequence, Callable
 
 import numpy as np
 from numpy import ndarray
+from scipy.ndimage import maximum_filter
 
 def mean_shift(points: ndarray,
                kernel: Callable|None = None,
@@ -146,8 +147,9 @@ def label_points(centroids: ndarray, points: ndarray) -> ndarray:
         return group_assignment
 
 
-def get_seeds(points: ndarray, bin_size,
-              min_count: int = 1, top_n: int|None = None, bounds: ndarray|None = None
+def get_seeds(points: ndarray, bin_size, *,
+              min_count: int = 1, top_n: int|None = None,
+              max_filter_size: tuple[int]|int|None = None, bounds: ndarray|None = None,
               ) -> ndarray:
     """
     Get initial seeds for the clustering algorithm. This is done by binning the
@@ -157,17 +159,20 @@ def get_seeds(points: ndarray, bin_size,
     the `bin_size` is set to the bandwidth of the kernel used in the mean-shift
     algorithm.
 
-    The number of bins can additionally be reduced with the `min_count` and
-    `top_n` parameters. Reducing the number of seeds can greatly speed up the
-    mean-shift algorithm, however, using these parameters may also remove some
-    important points that become unique clusters.
+    The number of bins can additionally be reduced with the `min_count`,
+    `top_n`, and `max_filter_size` parameters. Reducing the number of seeds can
+    greatly speed up the mean-shift algorithm, however, using these parameters
+    may also remove some important points that become unique clusters.
 
      * `min_count` only considers bins that contain at least that many points
      * `top_n` only considers that many of the most populated bins
+     * `max_filter_size` only considers bins that are local maxima within the given filter size (must be odd integers >1)
 
-    If both are used, both must be satisfied for a bin to be returned (i.e. the
+    If all are used, all must be satisfied for a bin to be returned (i.e. the
     bin must contain at least `min_count` points and be in the `top_n` most
-    populated bins).
+    populated bins). The `max_filter_size` is applied first, so if it is used,
+    there will be significantly more spread-out bins that are available for the
+    `top_n` parameters to filter from.
 
     The bounds parameter can be used to limit the bins to a specific range. This
     useful to automatically remove complete outliers. Additionally, providing
@@ -198,6 +203,11 @@ def get_seeds(points: ndarray, bin_size,
         bins = [np.arange(bound[0], bound[1]+1) for bound in bounds]
 
     counts, _ = np.histogramdd(points, bins=bins)
+
+    # Set every bin to 0 that has a higher max within max_filter_size
+    if max_filter_size is not None:
+        counts[counts < maximum_filter(counts, size=max_filter_size, mode='constant')] = 0
+
     if min_count <= 1 and top_n is None:
         points = np.argwhere(counts)
     elif top_n is None:

@@ -78,7 +78,14 @@ grid = {
     # Minimum bin counts to try for mean-shift seed selection
     # Larger will eliminate more seeds and be faster, but may miss some sources (but also may eliminate noise peaks)
     # A value of 1 means no elimination
+    # Note that as bandwith increases, the size of bins increases and thus the bin count needs to increase to have the same effect
     "min_bin_count": [5, 10],              # [1, 5, 10, 25, 50, 100]  # in general, larger is much worse and only slightly faster (but there are others that are just as fast)
+
+    # Max filter sizes to try for mean-shift seed selection
+    # Must be None (for no filtering) or odd integers >1 for filtering
+    # Remove possible seeds that are not local maxima within max_filter_size; this can help speed up results a lot by removing seeds
+    # As this is increased, seed_count should be decreased or min_bin_count increased to prevent finding random local maxima that are not sources
+    "max_filter_size": [None, 3],  # [None, 3, 5]
 
     # Convergence tolerances to try for mean-shift
     # Larger tolerances will converge faster but may be less accurate
