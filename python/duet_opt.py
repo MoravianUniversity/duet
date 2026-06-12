@@ -28,7 +28,7 @@ MAX_ATTEN = 1          # maximum symmetric attenuation
 
 DATA: list[tuple[np.ndarray, np.ndarray, np.ndarray]] = []
 
-NUM_CORES = os.process_cpu_count() // 2
+NUM_CORES = (os.process_cpu_count() or 2) // 2
 
 OUTPUT_FILENAME = "duet_opt_results.csv"
 
@@ -105,7 +105,7 @@ grid = {
     "delta_smoothing_mode": ["mean", "median", "gaussian"],
 
     # p and q weights for attenuation and delay estimators (from paper p.225)
-    "p": [0, 1, 2],
+    "p": [0.5, 1, 2],
     "q": [0, 2],
 }
 
