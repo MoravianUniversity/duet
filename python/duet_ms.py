@@ -74,6 +74,27 @@ class DuetMS(DuetBase):
         return self._delta_max
 
     @property
+    def time_bandwidth(self) -> float:
+        """
+        The bandwidth to use for the time dimension. If this is <=0, then time
+        is not included in the mean-shift algorithm. The time values are in
+        units of the STFT hop size, so a value of 1 would mean that points
+        within 1 hop of each other in time would be considered close.
+        """
+        return self._time_bandwidth
+    
+    @property
+    def freq_bandwidth(self) -> float:
+        """
+        The bandwidth to use for the frequency dimension. If this is <=0, then
+        frequency is not included in the mean-shift algorithm. The frequency
+        values are in units of the STFT bin size, so a value of 1 would mean
+        that points within 1 bin of each other in frequency would be considered
+        close.
+        """
+        return self._freq_bandwidth
+
+    @property
     def seed_count(self) -> int|None:
         """
         The number of seeds to consider for mean-shift.
@@ -112,6 +133,7 @@ class DuetMS(DuetBase):
     def __init__(self, sample_rate: int = 16000, *, window: int|ndarray = 256, oversample: int = 1,
                  threshold: float = 0.05, bandwidth: float|Sequence[float] = 0.2,
                  alpha_max: float = 0.7, delta_max: float = 3.6,
+                 time_bandwidth: float = 0.0, freq_bandwidth: float = 0.0,
                  seed_count: int|None = 25, min_bin_count: int = 1,
                  max_filter_size: tuple[int]|int|None = None,
                  convergence_tol: float = 0.1,
@@ -152,6 +174,18 @@ class DuetMS(DuetBase):
             default is 0.7.
         delta_max : float
             The maximum magnitude of delay to consider during seed generation, default is 3.6.
+        time_bandwidth : float
+            The bandwidth to use for the time dimension. If this is <=0, then time is not included
+            in the mean-shift algorithm. The time values are in units of the STFT hop size, so a
+            value of 1 would mean that points within 1 hop of each other in time would be
+            considered close. Can be useful for separating sources that have similar
+            attenuation/delay but are active at different times, default is 0 (not included).
+        freq_bandwidth : float
+            The bandwidth to use for the frequency dimension. If this is <=0, then frequency is not
+            included in the mean-shift algorithm. The frequency values are in units of the STFT bin
+            size, so a value of 1 would mean that points within 1 bin of each other in frequency
+            would be considered close. Can be useful for separating sources that have similar
+            attenuation/delay but are active at different frequencies, default is 0 (not included).
         seed_count : int|None
             Number of seeds to consider for mean-shift. If None, then all points are considered.
             Smaller values go faster but can result in missing clusters. Default is 25.
@@ -188,6 +222,8 @@ class DuetMS(DuetBase):
         self._bandwidth = bandwidth
         self._alpha_max = alpha_max
         self._delta_max = delta_max
+        self._time_bandwidth = time_bandwidth
+        self._freq_bandwidth = freq_bandwidth
         self._seed_count = seed_count
         self._min_bin_count = min_bin_count
         self._max_filter_size = max_filter_size
@@ -203,7 +239,7 @@ class DuetMS(DuetBase):
                           min_count=self.min_bin_count,
                           top_n=self.seed_count,
                           max_filter_size=self.max_filter_size,
-                          bounds=self._bounds(n))
+                          bounds=self._bounds(n, tf_weights.shape[-2:]))
         if seeds.size == 0:
             # No seeds found, return empty arrays
             empty = np.empty((weights.shape[0], 0)) if tf_weights.ndim == 3 else np.empty((0,))
@@ -221,7 +257,8 @@ class DuetMS(DuetBase):
                     ) -> tuple[ndarray, ndarray]:
         """
         Get the points weights for the mean-shift algorithm. This filters the
-        points based on the weights and the threshold.
+        points based on the weights and the threshold and includes the time and
+        frequency information if specified.
 
         Arguments
         ---------
@@ -238,9 +275,10 @@ class DuetMS(DuetBase):
         -------
         points : ndarray
             The points to use for the mean-shift algorithm, has shape
-            (n, 2) or (n, 2*n_channels-2). The first half of the columns are
-            the (symmetric) attenuation and the second half are the relative
-            delay.
+            (n, 2*n_channels-2+include_time+include_freq). The first half of
+            the columns are the (symmetric) attenuation and the second half are
+            the relative delay. The last columns are the time and frequency
+            values, if specified.
         weights : ndarray
             The weights of the points, has shape (n,)
         """
@@ -249,10 +287,16 @@ class DuetMS(DuetBase):
 
         # Reshape the data to be n-by-tf
         n = weights.shape[0] if weights.ndim == 3 else 1
-        tf = weights.shape[-2] * weights.shape[-1]
+        f, t = weights.shape[-2:]
+        tf = f * t
         alpha = alpha.reshape(n, tf)
         delta = delta.reshape(n, tf)
-        points = np.concatenate((alpha, delta))
+        pts = (alpha, delta)
+        if self.time_bandwidth > 0:
+            pts += (np.tile(np.arange(t), f).reshape(1, -1),)
+        if self.freq_bandwidth > 0:
+            pts += (np.repeat(np.arange(f), t).reshape(1, -1),)
+        points = np.concatenate(pts)
 
         # Get the weights
         if weights.ndim == 3:
@@ -262,8 +306,9 @@ class DuetMS(DuetBase):
 
         # Reduce the number of points to consider to speed up the process
         mask = weights > self.threshold
-        # NOTE: should test this again, but it seems like the threshold method is more robust; even
-        # without masking, these are already eliminated from the seeds, just not mean shift itself
+        # NOTE: the threshold method is more robust than clipping the values, however to speed up
+        # the C code, it requires clipping the values to be within the alpha and delta max values,
+        # so we do that here as well
         mask &= (np.abs(alpha) < self.alpha_max).all(0) & (np.abs(delta) < self.delta_max).all(0)
         points = points[:, mask]
         weights = weights[mask]
@@ -272,18 +317,27 @@ class DuetMS(DuetBase):
 
 
     @cache
-    def _bounds(self, n: int = 1) -> ndarray:
+    def _bounds(self, n: int = 1, tf_shape: tuple[int, int] = (0, 0)) -> ndarray:
         a_max, d_max = self.alpha_max, self.delta_max
         bounds = [[-a_max, a_max]]*n + [[-d_max, d_max]]*n
+        if self.time_bandwidth > 0:
+            bounds += [[0, tf_shape[1]]]
+        if self.freq_bandwidth > 0:
+            bounds += [[0, tf_shape[0]]]
         return np.array(bounds)
 
 
     @cache
     def _bandwidths(self, n: int = 1) -> float|ndarray:
+        tf_bandwidth = [self.time_bandwidth] if self.time_bandwidth > 0 else []
+        tf_bandwidth += [self.freq_bandwidth] if self.freq_bandwidth > 0 else []
+        bandwidths = None
         if isinstance(self.bandwidth, float):
-            return self.bandwidth
+            return np.array([self.bandwidth]*(2*n) + tf_bandwidth) if tf_bandwidth else self.bandwidth
         if len(self.bandwidth) == 2:
-            return np.array(self.bandwidth) if n == 1 else np.asarray(self.bandwidth).repeat(n)
-        if len(self.bandwidth) != 2*n:
+            bandwidths = np.array(self.bandwidth) if n == 1 else np.asarray(self.bandwidth).repeat(n)
+        if len(self.bandwidth) == 2*n:
+            bandwidths = np.asarray(self.bandwidth)
+        if bandwidths is None:
             raise ValueError(f"Invalid bandwidth shape: {self.bandwidth}")
-        return np.asarray(self.bandwidth)
+        return np.concatenate([bandwidths, tf_bandwidth]) if tf_bandwidth else bandwidths
