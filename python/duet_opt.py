@@ -14,6 +14,8 @@ from sklearn.model_selection import ParameterGrid
 from source_generation import compute_attenuation, combine_sources, load_wav_files
 from duet_ms import DuetMS
 
+from sklearn.metrics import adjusted_rand_score, normalized_mutual_info_score, v_measure_score
+
 SAMPLE_RATE = 16000    # sample rate of audio
 
 NUM_SAMPLES = 10       # number of audio samples to generate
@@ -147,14 +149,38 @@ def score_alpha_deltas(true, pred):
     true = np.transpose(true)
     pred = np.transpose(pred)
     if len(true) == 0 or len(pred) == 0:
-        return float('inf')
+        return {
+            "score_custom": float('inf'),
+            "score_custom2": float('inf'),
+            "score_ari": 0.0,
+            "score_nmi": 0.0,
+            "score_vm": 0.0,
+        }
     dists = sp.spatial.distance_matrix(true, pred)
 
     # TODO: try other scoring methods
     min1 = dists.min(1)
     min0 = dists.min(0)
-    return (rmse(min1) + rmse(min0)) * (0.01 * np.exp(len(pred) - 5*len(true)) + 1)  # as we get 5 times more predictions than true sources, we start penalizing majorly
-    # return rmse(min1) + rmse(min0) + max(min1.max(), min0.max())
+
+    score_custom = (rmse(min1) + rmse(min0)) * (0.01 * np.exp(len(pred) - 5*len(true)) + 1)
+    score_custom2 = rmse(min1) + rmse(min0) + max(min1.max(), min0.max())
+    true_labels = np.arange(len(true))
+    true_assigned = np.argmin(dists, axis=1)
+    try:
+        score_ari = adjusted_rand_score(true_labels, true_assigned)
+        score_nmi = normalized_mutual_info_score(true_labels, true_assigned)
+        score_vm = v_measure_score(true_labels, true_assigned)
+    except Exception:
+        score_ari = score_nmi = score_vm = 0.0
+    return {
+        "score_custom": score_custom,
+        "score_custom2": score_custom2,
+        "score_ari": score_ari,
+        "score_nmi": score_nmi,
+        "score_vm": score_vm,
+    }
+    # return (rmse(min1) + rmse(min0)) * (0.01 * np.exp(len(pred) - 5*len(true)) + 1)  # as we get 5 times more predictions than true sources, we start penalizing majorly
+    # # return rmse(min1) + rmse(min0) + max(min1.max(), min0.max())
 
 def init_data():
     """
@@ -179,7 +205,7 @@ def init_data():
         delays = [rand.uniform(MIN_DELAY, MAX_DELAY) for _ in sources]
         sym_attens = [rand.uniform(MIN_ATTEN, MAX_ATTEN) for _ in sources]
         attenuations = [compute_attenuation(a) for a in sym_attens]
-        max_delay = max(abs(d) for d in delays)
+        max_delay = int(np.ceil(max(abs(d) for d in delays)))
 
         # Take random segments
         starts = [rand.randint(PAD_LENGTH, len(s) - PAD_LENGTH - SEGMENT_LENGTH) for s in sources]
@@ -190,7 +216,8 @@ def init_data():
                for f, s, a, d in zip(selected_files, starts, attenuations, delays)])
 
         # Generate stereo channels
-        audio = combine_sources(sources, delays, attenuations)[max_delay:-max_delay]
+        audio = combine_sources(sources, delays, attenuations)
+        audio = audio[:, max_delay:-max_delay]
 
         DATA.append((audio, attenuations, delays))
 
@@ -213,17 +240,28 @@ def check_params(params: dict, data: list[tuple[np.ndarray, np.ndarray, np.ndarr
     try:
         preds = [find_alpha_deltas(d[0], **params) for d in data]
         elapsed = (time.time() - start) / len(data)
-        cur_scores = [score_alpha_deltas(d[1:], pred) for d, pred in zip(data, preds)]
-        return rmse(cur_scores), elapsed
+        all_scores = [score_alpha_deltas(d[1:], pred) for d, pred in zip(data, preds)]
+        # cur_scores = [score_alpha_deltas(d[1:], pred) for d, pred in zip(data, preds)]
+        # return rmse(cur_scores), elapsed
+       
+        # Average each metric across all samples (ignoring inf)
+        score_keys = ["score_custom", "score_custom2", "score_ari", "score_nmi", "score_vm"]
+        result = {}
+        for k in score_keys:
+            vals = [s[k] for s in all_scores if s[k] != float('inf')]
+            result[k] = float(np.nanmean(vals)) if vals else float('inf')
+        
+        return result, elapsed
     except Exception as e:
         print(f"Error occurred while evaluating params {params}: {e}", file=sys.stderr)
-        return np.nan, np.nan
+        return {k: np.nan for k in ["score_custom", "score_custom2", "score_ari", "score_nmi", "score_vm"]}, np.nan
+        # return np.nan, np.nan
 
 def main():
     # Run all parameter combinations
     param_grid = ParameterGrid(grid)
     param_grid_df = pd.DataFrame(param_grid)
-    scores = []
+    all_scores = []
     times = []
     overall_start = time.time()
     with Pool(NUM_CORES, init_data) as pool:
@@ -233,23 +271,25 @@ def main():
                 elapsed = time.time() - overall_start
                 perc = i / len(param_grid)
                 per = elapsed / i * 1000
-                print(f"Evaluating {i}/{len(param_grid)} {perc:.1%}; {round(per)}ms per eval; est remaining {per*(len(param_grid)-i)/(60*1000):.1f} min; best so far: {min(scores):.2f}")
+                print(f"Evaluating {i}/{len(param_grid)} {perc:.1%}; {round(per)}ms per eval; est remaining {per*(len(param_grid)-i)/(60*1000):.1f} min; best so far: {min(s['score_custom'] for s in all_scores):.2f}")
                 # Save results
-                results = param_grid_df.iloc[:i]
-                results["score"] = scores
+                results = param_grid_df.iloc[:i].copy()
+                for k in ["score_custom", "score_custom2", "score_ari", "score_nmi", "score_vm"]:
+                    results[k] = [s[k] for s in all_scores]
                 results["time"] = times
                 results.to_csv(OUTPUT_FILENAME, index=False)
-            scores.append(score)
+            all_scores.append(score)
             times.append(elapsed)
 
     # Final message
     elapsed = time.time() - overall_start
     per = elapsed / len(param_grid) * 1000
-    print(f"Done; {round(per)}ms per eval; total time: {elapsed/60:.1f} min; best score: {min(scores):.2f}")
+    print(f"Done; {round(per)}ms per eval; total time: {elapsed/60:.1f} min; best score: {min(all_scores):.2f}")
 
     # Save results
-    results = param_grid_df
-    results["score"] = scores
+    results = param_grid_df.iloc[:i].copy()
+    for k in ["score_custom", "score_custom2", "score_ari", "score_nmi", "score_vm"]:
+        results[k] = [s[k] for s in all_scores]
     results["time"] = times
     results.to_csv(OUTPUT_FILENAME, index=False)
 
