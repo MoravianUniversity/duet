@@ -89,9 +89,15 @@ grid = {
     # As this is increased, seed_count should be decreased or min_bin_count increased to prevent finding random local maxima that are not sources
     "max_filter_size": [None, 3],  # [None, 3, 5]
 
+    # Compute seeds with weights or not
+    # Using weights may help find better seeds, but will require a dramatically different min_bin_count
+    # (in my tests of a full audio sample, the `min_bin_count` changed from 50 to 600 when using weights to capture the same number of seeds)
+    "compute_seeds_using_weights": [False, True],
+
     # Convergence tolerances to try for mean-shift
     # Larger tolerances will converge faster but may be less accurate
     # A value of 1.0 means it will converge once reaching the nearest grid point
+    # (but since seeds are initialized at grid points, this means they will not move at all)
     "convergence_tol": [0.2, 0.25, 0.3],   # [0.05, 0.1, 0.2, 0.25, 0.5]
 
     # Alpha conversion operations to try

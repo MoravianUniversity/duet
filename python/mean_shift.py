@@ -147,8 +147,8 @@ def label_points(centroids: ndarray, points: ndarray) -> ndarray:
         return group_assignment
 
 
-def get_seeds(points: ndarray, bin_size, *,
-              min_count: int = 1, top_n: int|None = None,
+def get_seeds(points: ndarray, bin_size, *, weights: ndarray|None = None,
+              min_count: int|float = 1, top_n: int|None = None,
               max_filter_size: tuple[int]|int|None = None, bounds: ndarray|None = None,
               ) -> ndarray:
     """
@@ -159,32 +159,42 @@ def get_seeds(points: ndarray, bin_size, *,
     the `bin_size` is set to the bandwidth of the kernel used in the mean-shift
     algorithm.
 
+    Providing weights for the points will cause the bins to be weighted by the
+    sum of the weights of the points in the bin instead of the count of the
+    points in the bin. This is useful to prioritize heavier weighted regions of
+    the data.
+
     The number of bins can additionally be reduced with the `min_count`,
     `top_n`, and `max_filter_size` parameters. Reducing the number of seeds can
     greatly speed up the mean-shift algorithm, however, using these parameters
     may also remove some important points that become unique clusters.
 
-     * `min_count` only considers bins that contain at least that many points
-     * `top_n` only considers that many of the most populated bins
-     * `max_filter_size` only considers bins that are local maxima within the given filter size (must be odd integers >1)
+     * `min_count` only considers bins that contain at least that many
+       points or that much total weight
+     * `top_n` only considers that many of the most populated/weighted bins
+     * `max_filter_size` only considers bins that are local maxima within the
+       given filter size (must be odd integers >1)
 
     If all are used, all must be satisfied for a bin to be returned (i.e. the
     bin must contain at least `min_count` points and be in the `top_n` most
     populated bins). The `max_filter_size` is applied first, so if it is used,
     there will be significantly more spread-out bins that are available for the
-    `top_n` parameters to filter from.
+    `top_n` parameters to filter from. The `min_count` is based on the weighted
+    count of the bins if weights are provided. In this case, the `min_count` is
+    not necessarily an integer and it is possible to have a `min_count` of less
+    than 1 (e.g. 0.5) to allow for bins that have some weight but not a full
+    point.
 
-    The bounds parameter can be used to limit the bins to a specific range. This
-    useful to automatically remove complete outliers. Additionally, providing
-    the bounds even if they eliminate no bins speeds up the process greatly by
-    allowing for faster allocation of the grid to search (almost twice as fast).
+    The `bounds` parameter can be used to limit the bins to a specific range.
+    This useful to automatically remove complete outliers. Additionally,
+    providing the `bounds` even if they eliminate no bins speeds up the process
+    greatly by allowing for faster allocation of the grid to search (almost
+    twice as fast).
     """
-    # TODO: support weights for the points?
     # TODO: this uses bin left edges, but maybe bin centers would be better?
     bin_size = np.asarray(bin_size)
     points = np.round(points / bin_size).astype(int)
 
-    # New Method
     # About 9x to 15x faster than the original method by using histogramdd() instead of unique().
     # This one is likely easier to port to C as well (except for maybe argpartition).
     # This one uses more memory though (but in C could reuse the counts array).
@@ -202,7 +212,7 @@ def get_seeds(points: ndarray, bin_size, *,
         mins = bounds[:, 0]
         bins = [np.arange(bound[0], bound[1]+1) for bound in bounds]
 
-    counts, _ = np.histogramdd(points, bins=bins)
+    counts, _ = np.histogramdd(points, bins=bins, weights=weights)
 
     # Set every bin to 0 that has a higher max within max_filter_size
     if max_filter_size is not None:
@@ -228,32 +238,6 @@ def get_seeds(points: ndarray, bin_size, *,
             points = np.transpose(indices)
 
     return (points + mins) * bin_size
-
-    # # Original Method
-    # # Uses numpy's unique function which is the time limiting step (~99% of the time).
-    # # Tried using sets/dicts but they were about 25% slower.
-    # # Never added bounds support to this one.
-    # if min_count <= 1 and top_n is None:
-    #     return np.unique(points, axis=0) * bin_size
-    #     # return np.array({tuple(p) for p in points}) * bin_size
-
-    # seeds, bin_counts = np.unique(points, axis=0, return_counts=True)
-    # # from collections import defaultdict
-    # # bin_counts = defaultdict(int)
-    # # for p in points: bin_counts[tuple(p)] += 1
-
-    # if top_n is None:
-    #     ind = bin_counts > min_count
-    # else:
-    #     ind = np.argpartition(bin_counts, -top_n)[-top_n:]
-    #     if min_count > 1:
-    #         ind = ind[bin_counts[ind] >= min_count]
-    # # if top_n is not None:
-    # #     min_count = max(sorted(bin_counts.values(), reverse=True)[top_n], min_count)
-    # # points = np.array([p for p, c in bin_counts.items() if c >= min_count])
-
-    # return seeds[ind] * bin_size
-    # # return points * bin_size
 
 
 ##### KERNEL FUNCTION #####

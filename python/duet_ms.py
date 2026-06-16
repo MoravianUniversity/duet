@@ -14,7 +14,6 @@ Improvements that could be made:
  * Alternative seed generation methods (like using the previous mean-shift
    centroids along with some grid points from new data, or a simple peak-finding
    method to find local maxima in the data)
- * Try including frequency/time information in the mean-shift points
 
 Should Tune:
  * All of the parameters of the __init__ method, particularly the window length
@@ -104,10 +103,13 @@ class DuetMS(DuetBase):
         return self._seed_count
 
     @property
-    def min_bin_count(self) -> int:
+    def min_bin_count(self) -> int|float:
         """
         The minimum number of points in a bin to consider it as a seed.
-        Larger values go faster but can result in missing clusters.
+        Larger values go faster but can result in missing clusters. When computing seeds using
+        weights, this is based on the weighted count of the bins instead of the number of points
+        in the bins, so it can be a float value less than 1 to allow for bins that have some
+        weight but not a full point.
         """
         return self._min_bin_count
     
@@ -123,6 +125,16 @@ class DuetMS(DuetBase):
         return self._max_filter_size
 
     @property
+    def compute_seeds_using_weights(self) -> bool:
+        """
+        Whether to compute the seeds using the weights or not. This can be useful to speed up
+        results by only considering bins that have a high weight. This effects the `min_bin_count`
+        parameter which is based on the weighted count of the bins instead of the number of points
+        in the bins.
+        """
+        return self._compute_seeds_using_weights
+
+    @property
     def convergence_tol(self) -> float:
         """
         The convergence tolerance for the mean-shift algorithm.
@@ -136,6 +148,7 @@ class DuetMS(DuetBase):
                  time_bandwidth: float = 0.0, freq_bandwidth: float = 0.0,
                  seed_count: int|None = 25, min_bin_count: int = 1,
                  max_filter_size: tuple[int]|int|None = None,
+                 compute_seeds_using_weights: bool = False,
                  convergence_tol: float = 0.1,
                  alpha_op: str = "symmetric", big_delay: str = "none",
                  delta_smoothing: tuple[int, int] = (1, 1), delta_smoothing_mode: str = "mean",
@@ -195,6 +208,11 @@ class DuetMS(DuetBase):
         max_filter_size : tuple[int]|int|None
             The maximum filter size to use for mean-shift seed selection. Must be None (for no
             filtering) or odd integers >1 for filtering. Default is None.
+        compute_seeds_using_weights : bool
+            Whether to compute the seeds using the weights or not. This can be useful to speed up
+            results by only considering bins that have a high weight. This effects the
+            `min_bin_count` parameter which is based on the weighted count of the bins instead of
+            the number of points in the bins. Default is False.
         convergence_tol : float
             The convergence tolerance for the mean-shift algorithm.
             Larger values go faster but can result in slightly off centroids.
@@ -227,6 +245,7 @@ class DuetMS(DuetBase):
         self._seed_count = seed_count
         self._min_bin_count = min_bin_count
         self._max_filter_size = max_filter_size
+        self._compute_seeds_using_weights = compute_seeds_using_weights
         self._convergence_tol = convergence_tol
 
 
@@ -236,6 +255,7 @@ class DuetMS(DuetBase):
         points, weights = self._get_points(tf_weights, alpha, delta)
         bandwidths = self._bandwidths(n)
         seeds = get_seeds(points, bandwidths,
+                          weights=weights if self.compute_seeds_using_weights else None,
                           min_count=self.min_bin_count,
                           top_n=self.seed_count,
                           max_filter_size=self.max_filter_size,
