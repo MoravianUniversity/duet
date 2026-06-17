@@ -3,6 +3,7 @@ import re
 import sys
 import random
 import time
+from collections import namedtuple
 from multiprocessing import Pool
 
 import numpy as np
@@ -27,12 +28,31 @@ MIN_DELAY = -8         # minimum delay in samples
 MAX_DELAY = 8          # maximum delay in samples
 MIN_ATTEN = -1         # minimum symmetric attenuation
 MAX_ATTEN = 1          # maximum symmetric attenuation
+MIN_RMS_DB = -40       # minimum RMS in dB, used to filter out very quiet sources that will be indistinguishable from noise
 
 DATA: list[tuple[np.ndarray, np.ndarray, np.ndarray]] = []
 
 NUM_CORES = (os.process_cpu_count() or 2) // 2
 
 OUTPUT_FILENAME = "duet_opt_results.csv"
+
+ScoreParams = namedtuple("ScoreParams", ["true", "pred", "min0", "min1", "true_labels", "true_assigned"])
+
+SCORERS = {
+    "custom": lambda props: (rmse(props.min1) + rmse(props.min0)) * (0.01 * np.exp(len(props.pred) - 5*len(props.true)) + 1),
+    "custom2": lambda props: rmse(props.min1) + rmse(props.min0) + max(props.min1.max(), props.min0.max()),
+    "ari": lambda props: adjusted_rand_score(props.true_labels, props.true_assigned),
+    "nmi": lambda props: normalized_mutual_info_score(props.true_labels, props.true_assigned),
+    "vm": lambda props: v_measure_score(props.true_labels, props.true_assigned)
+}
+
+DEFAULT_SCORES = {
+    "custom": float('inf'),
+    "custom2": float('inf'),
+    "ari": 0.0,
+    "nmi": 0.0,
+    "vm": 0.0,
+}
 
 grid = {
     # Audio Lengths to try (in ms)
@@ -155,38 +175,24 @@ def score_alpha_deltas(true, pred):
     true = np.transpose(true)
     pred = np.transpose(pred)
     if len(true) == 0 or len(pred) == 0:
-        return {
-            "score_custom": float('inf'),
-            "score_custom2": float('inf'),
-            "score_ari": 0.0,
-            "score_nmi": 0.0,
-            "score_vm": 0.0,
-        }
+        return DEFAULT_SCORES.copy()
     dists = sp.spatial.distance_matrix(true, pred)
 
     # TODO: try other scoring methods
     min1 = dists.min(1)
     min0 = dists.min(0)
-
-    score_custom = (rmse(min1) + rmse(min0)) * (0.01 * np.exp(len(pred) - 5*len(true)) + 1)
-    score_custom2 = rmse(min1) + rmse(min0) + max(min1.max(), min0.max())
     true_labels = np.arange(len(true))
     true_assigned = np.argmin(dists, axis=1)
-    try:
-        score_ari = adjusted_rand_score(true_labels, true_assigned)
-        score_nmi = normalized_mutual_info_score(true_labels, true_assigned)
-        score_vm = v_measure_score(true_labels, true_assigned)
-    except Exception:
-        score_ari = score_nmi = score_vm = 0.0
-    return {
-        "score_custom": score_custom,
-        "score_custom2": score_custom2,
-        "score_ari": score_ari,
-        "score_nmi": score_nmi,
-        "score_vm": score_vm,
-    }
-    # return (rmse(min1) + rmse(min0)) * (0.01 * np.exp(len(pred) - 5*len(true)) + 1)  # as we get 5 times more predictions than true sources, we start penalizing majorly
-    # # return rmse(min1) + rmse(min0) + max(min1.max(), min0.max())
+    params = ScoreParams(true, pred, min0, min1, true_labels, true_assigned)
+
+    scores = {}
+    for key, scorer in SCORERS.items():
+        try:
+            scores[key] = scorer(params)
+        except Exception:
+            scores[key] = DEFAULT_SCORES[key]
+    return scores
+
 
 def init_data():
     """
@@ -227,7 +233,7 @@ def init_data():
 
         DATA.append((audio, attenuations, delays))
 
-def check_params(params: dict, data: list[tuple[np.ndarray, np.ndarray, np.ndarray]] = DATA) -> tuple[float, float]:
+def check_params(params: dict, data: list[tuple[np.ndarray, np.ndarray, np.ndarray]] = DATA) -> tuple[dict[str, float], float]:
     """
     Check a given set of DUET parameters by scoring them on the entire test data.
 
@@ -247,21 +253,18 @@ def check_params(params: dict, data: list[tuple[np.ndarray, np.ndarray, np.ndarr
         preds = [find_alpha_deltas(d[0], **params) for d in data]
         elapsed = (time.time() - start) / len(data)
         all_scores = [score_alpha_deltas(d[1:], pred) for d, pred in zip(data, preds)]
-        # cur_scores = [score_alpha_deltas(d[1:], pred) for d, pred in zip(data, preds)]
-        # return rmse(cur_scores), elapsed
        
         # Average each metric across all samples (ignoring inf)
-        score_keys = ["score_custom", "score_custom2", "score_ari", "score_nmi", "score_vm"]
         result = {}
-        for k in score_keys:
+        for k in SCORERS.keys():
             vals = [s[k] for s in all_scores if s[k] != float('inf')]
             result[k] = float(np.nanmean(vals)) if vals else float('inf')
+            # TODO: use rmse(cur_scores) instead of nanmean?
         
         return result, elapsed
     except Exception as e:
         print(f"Error occurred while evaluating params {params}: {e}", file=sys.stderr)
-        return {k: np.nan for k in ["score_custom", "score_custom2", "score_ari", "score_nmi", "score_vm"]}, np.nan
-        # return np.nan, np.nan
+        return {k: np.nan for k in SCORERS.keys()}, np.nan
 
 def main():
     # Run all parameter combinations
@@ -277,11 +280,14 @@ def main():
                 elapsed = time.time() - overall_start
                 perc = i / len(param_grid)
                 per = elapsed / i * 1000
-                print(f"Evaluating {i}/{len(param_grid)} {perc:.1%}; {round(per)}ms per eval; est remaining {per*(len(param_grid)-i)/(60*1000):.1f} min; best so far: {min(s['score_custom'] for s in all_scores):.2f}")
+                print(f"Evaluating {i}/{len(param_grid)} {perc:.1%}; "
+                      f"{round(per)}ms per eval; "
+                      f"est remaining {per*(len(param_grid)-i)/(60*1000):.1f} min; "
+                      f"best so far: {min(s['custom'] for s in all_scores):.2f}")
                 # Save results
                 results = param_grid_df.iloc[:i].copy()
-                for k in ["score_custom", "score_custom2", "score_ari", "score_nmi", "score_vm"]:
-                    results[k] = [s[k] for s in all_scores]
+                for k in SCORERS.keys():
+                    results[f"score_{k}"] = [s[k] for s in all_scores]
                 results["time"] = times
                 results.to_csv(OUTPUT_FILENAME, index=False)
             all_scores.append(score)
@@ -290,12 +296,14 @@ def main():
     # Final message
     elapsed = time.time() - overall_start
     per = elapsed / len(param_grid) * 1000
-    print(f"Done; {round(per)}ms per eval; total time: {elapsed/60:.1f} min; best score: {min(all_scores):.2f}")
+    print(f"Done; {round(per)}ms per eval; total time: "
+          f"{elapsed/60:.1f} min; "
+          f"best score: {min(all_scores):.2f}")
 
     # Save results
     results = param_grid_df.iloc[:i].copy()
-    for k in ["score_custom", "score_custom2", "score_ari", "score_nmi", "score_vm"]:
-        results[k] = [s[k] for s in all_scores]
+    for k in SCORERS.keys():
+        results[f"score_{k}"] = [s[k] for s in all_scores]
     results["time"] = times
     results.to_csv(OUTPUT_FILENAME, index=False)
 
