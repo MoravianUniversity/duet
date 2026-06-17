@@ -193,11 +193,25 @@ def score_alpha_deltas(true, pred):
             scores[key] = DEFAULT_SCORES[key]
     return scores
 
+def rms(x):
+    """
+    Compute root mean square of given values.
+    """
+    x = x - np.mean(x)  # remove DC offset
+    return np.sqrt(np.mean(np.multiply(x, x)))
+
+def rms_db(x):
+    """
+    Compute root mean square in dB of given values. If the original data is in the range [-1, 1],
+    then this will be a non-positive value with more negative values indicating quieter sounds.
+    """
+    return 20 * np.log10(rms(x))
 
 def init_data():
     """
     Initialize data. Loads audio files and generates samples.
     """
+    DATA.clear()  # clear data in case of re-initialization
     base_dir = "FOAMS_processed_audio"
 
     #load segmentation_info and create a dictionary
@@ -207,7 +221,7 @@ def init_data():
 
     # Generate samples
     rand = random.Random(42)
-    for _ in range(NUM_SAMPLES):
+    while len(DATA) < NUM_SAMPLES:
         num_sources = rand.randint(MIN_AUDIO_SUBSAMPLES, MAX_AUDIO_SUBSAMPLES)
         sources = rand.sample(all_sources, num_sources)
         selected_files = [s[0] for s in sources]
@@ -222,10 +236,13 @@ def init_data():
         # Take random segments
         starts = [rand.randint(PAD_LENGTH, len(s) - PAD_LENGTH - SEGMENT_LENGTH) for s in sources]
         sources = [s[start-max_delay:start+SEGMENT_LENGTH+max_delay] for s, start in zip(sources, starts)]
+        rms_values = [rms_db(s) for s in sources]
+        if any(rms_db(s) < MIN_RMS_DB for s in sources):
+            continue  # skip samples with very quiet sources that will be indistinguishable from noise
 
         # Information about the sources for debugging
-        print([(seg_dict[int(re.findall(r'\d+', f)[0])], s, a, d)
-               for f, s, a, d in zip(selected_files, starts, attenuations, delays)])
+        print([f"{seg_dict[int(re.findall(r'\d+', f)[0])]}: s={s}, a={a:.2f}, d={d:.2f}, rms={rms:.2f}"
+               for f, s, a, d, rms in zip(selected_files, starts, attenuations, delays, rms_values)])
 
         # Generate stereo channels
         audio = combine_sources(sources, delays, attenuations)

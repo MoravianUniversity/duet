@@ -118,6 +118,9 @@ def load_wav_files(base_dir: str, frequency: int = 16000) -> list[tuple[str, np.
             data = signal.resample(data, frequency * data.shape[0] // fs)
         if data.dtype.kind != 'f':
             data = data / np.iinfo(data.dtype).max
+        else:
+            # TODO: in my tests, this is likely 32768 since it seems to be 16-bit audio converted to float
+            data = data / np.max(np.abs(data))  # Normalize to -1 to 1 if already float
         if data.ndim > 1:
             # Handle multi-channel audio by taking each channel as a separate source
             for ch in range(data.shape[1]):
@@ -183,8 +186,6 @@ def plot_sources_and_output(j, sources: list[np.ndarray], output_path: str = "ou
 
 
 from duet_ms import DuetMS
-from matplotlib.colors import LogNorm
-import seaborn as sns
 
 def find_alpha_deltas(x: np.ndarray,
                       real_alpha: list[float], real_delta: list[float],
