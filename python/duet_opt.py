@@ -43,7 +43,9 @@ SCORERS = {
     "custom2": lambda props: rmse(props.min1) + rmse(props.min0) + max(props.min1.max(), props.min0.max()),
     "ari": lambda props: adjusted_rand_score(props.true_labels, props.true_assigned),
     "nmi": lambda props: normalized_mutual_info_score(props.true_labels, props.true_assigned),
-    "vm": lambda props: v_measure_score(props.true_labels, props.true_assigned)
+    "vm": lambda props: v_measure_score(props.true_labels, props.true_assigned),
+    "precision": lambda props: float(np.mean(props.min0 < 1.0)),
+    "recall": lambda props: float(np.mean(props.min1 < 1.0)),
 }
 
 DEFAULT_SCORES = {
@@ -52,6 +54,8 @@ DEFAULT_SCORES = {
     "ari": 0.0,
     "nmi": 0.0,
     "vm": 0.0,
+    "precision": 0.0,
+    "recall": 0.0,
 }
 
 grid = {
@@ -274,8 +278,24 @@ def check_params(params: dict, data: list[tuple[np.ndarray, np.ndarray, np.ndarr
         # Average each metric across all samples (ignoring inf)
         result = {}
         for k in SCORERS.keys():
-            vals = [s[k] for s in all_scores if s[k] != float('inf')]
-            result[k] = float(np.nanmean(vals)) if vals else float('inf')
+            vals = [s[k] for s in all_scores if s[k] != float('inf') and not np.isnan(s[k])]
+            if vals:
+                result[f"{k}_mean"] = float(np.mean(vals))
+                result[f"{k}_median"] = float(np.median(vals))
+                result[f"{k}_min"] = float(np.min(vals))
+                result[f"{k}_max"] = float(np.max(vals))
+                result[f"{k}_25"] = float(np.percentile(vals, 25))
+                result[f"{k}_75"] = float(np.percentile(vals, 75))
+            else:
+                result[f"{k}_mean"] = float('inf')
+                result[f"{k}_median"] = float('inf')
+                result[f"{k}_min"] = float('inf')
+                result[f"{k}_max"] = float('inf')
+                result[f"{k}_25"] = float('inf')
+                result[f"{k}_75"] = float('inf')
+
+
+
             # TODO: use rmse(cur_scores) instead of nanmean?
         
         return result, elapsed
