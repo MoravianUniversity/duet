@@ -72,6 +72,8 @@ def mean_shift(points: ndarray,
     # Remove bad centroids
     if len(remove) > 0:
         centroids = np.delete(centroids, remove, axis=0)
+        if len(centroids) == 0:
+            return centroids
 
     # Combine all centroids that are close to each other
     return remove_near_duplicates(centroids, bandwidth)
@@ -208,7 +210,7 @@ def get_seeds(points: ndarray, bin_size, *, weights: ndarray|None = None,
             raise ValueError("bounds must be a 2D array with shape (n, 2)")
         if bounds.shape[0] != points.shape[1]:
             raise ValueError("bounds must have the same number of rows as points")
-        bounds = np.round(bounds / bin_size[:, None]).astype(int)
+        bounds = np.round(bounds / np.atleast_2d(bin_size)).astype(int)
         mins = bounds[:, 0]
         bins = [np.arange(bound[0], bound[1]+1) for bound in bounds]
 
