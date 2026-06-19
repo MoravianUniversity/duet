@@ -240,22 +240,23 @@ def find_alpha_deltas(x: np.ndarray,
 
 
 def display_results(alpha: np.ndarray, delta: np.ndarray, tf_weights: np.ndarray,
-                    pred_alpha: list[float], pred_delta: list[float],
-                    real_alpha: list[float], real_delta: list[float]):
+                    pred_alpha: list[float] = [], pred_delta: list[float] = [],
+                    real_alpha: list[float] = [], real_delta: list[float] = [],
+                    color: str|None = None) -> None:
     # Transform the weights for display purposes
     weights_log = np.log(tf_weights)
     weights_log = (weights_log - np.min(weights_log)) / (np.max(weights_log) - np.min(weights_log)) / 5
 
     #plt.figure(figsize=(10, 10))
-    plt.scatter(alpha, delta, s=1, alpha=weights_log)
-    plt.scatter(pred_alpha, pred_delta, c='black', marker='x')
+    plt.scatter(alpha, delta, s=1, alpha=weights_log, c=color)
+    plt.scatter(pred_alpha, pred_delta, c=color or 'black', marker='x')
     for a, d in zip(real_alpha, real_delta):
-        plt.scatter(a, d, marker='o', edgecolors='red', facecolors='none', s=80)
+        plt.scatter(a, d, marker='o', edgecolors=color or 'red', facecolors='none', s=80)
     plt.xlabel('Attenuation (alpha)')
     plt.ylabel('Delay (delta)')
     plt.xlim(-2, 2)
     plt.ylim(-8, 8)
-    plt.show()
+    #plt.show()
 
 
 def main():

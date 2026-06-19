@@ -23,14 +23,19 @@ NUM_SAMPLES = 10       # number of audio samples to generate
 MIN_AUDIO_SUBSAMPLES = 2 # minimum number of audio subsamples to combine into a single sample
 MAX_AUDIO_SUBSAMPLES = 2 # maximum number of audio subsamples to combine into a single sample
 PAD_LENGTH = 800       # 50ms at 16kHz - avoid the beginning and end of the audio samples
-SEGMENT_LENGTH = 4800  # 300ms at 16kHz (>144*2) - length of audio segments to use for evaluation
+SEGMENT_LENGTH = 2400  # 150ms at 16kHz (>=144ms) - length of audio segments to use for evaluation
 MIN_DELAY = -8         # minimum delay in samples
 MAX_DELAY = 8          # maximum delay in samples
 MIN_ATTEN = -1         # minimum symmetric attenuation
 MAX_ATTEN = 1          # maximum symmetric attenuation
 MIN_RMS_DB = -40       # minimum RMS in dB, used to filter out very quiet sources that will be indistinguishable from noise
 
-DATA: list[tuple[np.ndarray, np.ndarray, np.ndarray]] = []
+# List of data samples, where each sample is a tuple of:
+#   * full audio of all samples combined
+#   * true attenuations (list/array of floats)
+#   * true delays (list/array of floats)
+#   * sub_audios (list of individual audio sources, composed with the same delays and attenuations as the full audio)
+DATA: list[tuple[np.ndarray, np.ndarray, np.ndarray, list[np.ndarray]]] = []
 
 NUM_CORES = (os.process_cpu_count() or 2) // 2
 
@@ -58,7 +63,7 @@ DEFAULT_SCORES = {
     "recall": 0.0,
 }
 
-grid = {
+grid = [{
     # Audio Lengths to try (in ms)
     # Original target was 96ms, must be multiple of 16ms
     # In theory, longer audio lengths should give better results, but take longer to compute and use more memory
@@ -146,13 +151,14 @@ grid = {
     # p and q weights for attenuation and delay estimators (from paper p.225)
     "p": [0.5, 1, 2],
     "q": [0, 2],
-}
+}]
 
 def find_alpha_deltas(x: np.ndarray, fs: int = 16000, **params):
     """
     Find alpha and delta peaks for given audio and DUET parameters.
     """
     # Extract audio length and trim audio
+    params = params.copy()
     audio_length = params.pop("audio_length")
     x = x[:, :audio_length*fs//1000]
 
@@ -172,11 +178,17 @@ def rmse(val):
     """
     return np.sqrt(np.mean(np.multiply(val, val)))
 
-def score_alpha_deltas(true, pred):
+def score_alpha_deltas(true_data: tuple[np.ndarray, np.ndarray, np.ndarray, list[np.ndarray]], pred):
     """
-    Score predicted alpha and delta values against true values.
+    Score predicted alpha and delta values against true values. The true values
+    are a tuple of:
+      * full audio of all samples combined
+      * true attenuations (list/array of floats)
+      * true delays (list/array of floats)
+      * sub_audios (list of individual audio sources, composed with the same delays and attenuations as the full audio)
     """
-    true = np.transpose(true)
+    true_audio, true_attenuations, true_delays, sub_audios = true_data
+    true = np.transpose([true_attenuations, true_delays])
     pred = np.transpose(pred)
     if len(true) == 0 or len(pred) == 0:
         return DEFAULT_SCORES.copy()
@@ -211,6 +223,12 @@ def rms_db(x):
     """
     return 20 * np.log10(rms(x))
 
+def int_delay(d: float) -> int:
+    """
+    Compute integer delay from a possibly fractional delay by rounding to the nearest integer.
+    """
+    return int(np.ceil(abs(d)))
+
 def init_data():
     """
     Initialize data. Loads audio files and generates samples.
@@ -234,8 +252,8 @@ def init_data():
         # Create test delays/attenuations
         delays = [rand.uniform(MIN_DELAY, MAX_DELAY) for _ in sources]
         sym_attens = [rand.uniform(MIN_ATTEN, MAX_ATTEN) for _ in sources]
-        attenuations = [compute_attenuation(a) for a in sym_attens]
-        max_delay = int(np.ceil(max(abs(d) for d in delays)))
+        attenuations = [float(compute_attenuation(a)) for a in sym_attens]
+        max_delay = max(int_delay(d) for d in delays)
 
         # Take random segments
         starts = [rand.randint(PAD_LENGTH, len(s) - PAD_LENGTH - SEGMENT_LENGTH) for s in sources]
@@ -252,9 +270,14 @@ def init_data():
         audio = combine_sources(sources, delays, attenuations)
         audio = audio[:, max_delay:-max_delay]
 
-        DATA.append((audio, attenuations, delays))
+        # Generate individual parts for scoring
+        # TODO: the trimming needs work...
+        sub_audios = [combine_sources([s], [d], [a])[:, (max_delay-int_delay(d)):-int_delay(d)]
+                      for s, d, a in zip(sources, delays, attenuations)]
 
-def check_params(params: dict, data: list[tuple[np.ndarray, np.ndarray, np.ndarray]] = DATA) -> tuple[dict[str, float], float]:
+        DATA.append((audio, attenuations, delays, sub_audios))
+
+def check_params(params: dict, data: list[tuple[np.ndarray, np.ndarray, np.ndarray, list[np.ndarray]]] = DATA) -> tuple[dict[str, float], float]:
     """
     Check a given set of DUET parameters by scoring them on the entire test data.
 
@@ -273,7 +296,7 @@ def check_params(params: dict, data: list[tuple[np.ndarray, np.ndarray, np.ndarr
     try:
         preds = [find_alpha_deltas(d[0], **params) for d in data]
         elapsed = (time.time() - start) / len(data)
-        all_scores = [score_alpha_deltas(d[1:], pred) for d, pred in zip(data, preds)]
+        all_scores = [score_alpha_deltas(d, pred) for d, pred in zip(data, preds)]
        
         # Average each metric across all samples (ignoring inf)
         result = {}
