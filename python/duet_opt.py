@@ -343,11 +343,11 @@ def main():
                 print(f"Evaluating {i}/{len(param_grid)} {perc:.1%}; "
                       f"{round(per)}ms per eval; "
                       f"est remaining {per*(len(param_grid)-i)/(60*1000):.1f} min; "
-                      f"best so far: {min(s['custom'] for s in all_scores):.2f}")
+                      f"best so far: {min(s['custom_mean'] for s in all_scores):.2f}")
                 # Save results
                 results = param_grid_df.iloc[:i].copy()
                 for k in SCORERS.keys():
-                    results[f"score_{k}"] = [s[k] for s in all_scores]
+                    results[f"score_{k}"] = [s[f"{k}_mean"] for s in all_scores]
                 results["time"] = times
                 results.to_csv(OUTPUT_FILENAME, index=False)
             all_scores.append(score)
