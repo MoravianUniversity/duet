@@ -192,7 +192,7 @@ def score_alpha_deltas(true_data: tuple[np.ndarray, np.ndarray, np.ndarray, list
     pred = np.transpose(pred)
     if len(true) == 0 or len(pred) == 0:
         return DEFAULT_SCORES.copy()
-    dists = sp.spatial.distance.sdist(true, pred)
+    dists = sp.spatial.distance.cdist(true, pred)
 
     # TODO: try other scoring methods
     min1 = dists.min(1)
