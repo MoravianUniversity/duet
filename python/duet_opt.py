@@ -80,7 +80,7 @@ grid = [{
 
     # Thresholds to try for peak picking
     # Lower thresholds include more data but may include more noise and will be slower
-    "threshold": [0.25, 0.35, 0.5, 0.75],  # [0.05, 0.1, 0.2, 0.25, 0.5, 0.75]
+    "threshold": [0.5, 0.75], #[0.25, 0.35, 0.5, 0.75],  # [0.05, 0.1, 0.2, 0.25, 0.5, 0.75]
 
     # Bandwidths to try for mean-shift
     # Single values are isotropic, tuples are (time_bandwidth, frequency_bandwidth)
@@ -121,13 +121,13 @@ grid = [{
     # Compute seeds with weights or not
     # Using weights may help find better seeds, but will require a dramatically different min_bin_count
     # (in my tests of a full audio sample, the `min_bin_count` changed from 50 to 600 when using weights to capture the same number of seeds)
-    "compute_seeds_using_weights": [False, True],
+    "compute_seeds_using_weights":  [False],# [False, True],
 
     # Convergence tolerances to try for mean-shift
     # Larger tolerances will converge faster but may be less accurate
     # A value of 1.0 means it will converge once reaching the nearest grid point
     # (but since seeds are initialized at grid points, this means they will not move at all)
-    "convergence_tol": [0.2, 0.25, 0.3],   # [0.05, 0.1, 0.2, 0.25, 0.5]
+    "convergence_tol": [0.25], #[0.2, 0.25, 0.3],   # [0.05, 0.1, 0.2, 0.25, 0.5]
 
     # Alpha conversion operations to try
     # "symmetric" is the original DUET operation, "log" is a logarithmic scaling
