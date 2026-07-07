@@ -363,7 +363,7 @@ def main():
     # Save results
     results = param_grid_df.iloc[:i].copy()
     for k in SCORERS.keys():
-        results[f"score_{k}"] = [s[k] for s in all_scores]
+        results[f"score_{k}"] = [s[f"{k}_mean"] for s in all_scores]
     results["time"] = times
     results.to_csv(OUTPUT_FILENAME, index=False)
 
