@@ -324,7 +324,8 @@ def check_params(params: dict, data: list[tuple[np.ndarray, np.ndarray, np.ndarr
         return result, elapsed
     except Exception as e:
         print(f"Error occurred while evaluating params {params}: {e}", file=sys.stderr)
-        return {k: np.nan for k in SCORERS.keys()}, np.nan
+        # return {k: np.nan for k in SCORERS.keys()}, np.nan
+        return {f"{k}_{stat}": np.nan for k in SCORERS.keys() for stat in ['mean', 'median', 'min', 'max', '25', '75']}, np.nan
 
 def main():
     # Run all parameter combinations
@@ -361,7 +362,7 @@ def main():
           f"best score: {min(s['custom_mean'] for s in all_scores):.2f}")
 
     # Save results
-    results = param_grid_df.iloc[:i].copy()
+    results = param_grid_df.iloc[:len(all_scores)].copy()
     for k in SCORERS.keys():
         results[f"score_{k}"] = [s[f"{k}_mean"] for s in all_scores]
     results["time"] = times
