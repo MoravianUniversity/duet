@@ -358,7 +358,7 @@ def main():
     per = elapsed / len(param_grid) * 1000
     print(f"Done; {round(per)}ms per eval; total time: "
           f"{elapsed/60:.1f} min; "
-          f"best score: {min(all_scores):.2f}")
+          f"best score: {min(s['custom_mean'] for s in all_scores):.2f}")
 
     # Save results
     results = param_grid_df.iloc[:i].copy()
