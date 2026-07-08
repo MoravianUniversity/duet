@@ -67,11 +67,11 @@ grid = [{
     # Audio Lengths to try (in ms)
     # Original target was 96ms, must be multiple of 16ms
     # In theory, longer audio lengths should give better results, but take longer to compute and use more memory
-    "audio_length": [64, 80, 96],  # TODO: add 112
+    "audio_length": [64, 80, 96, 112, 128],
 
     # STFT window sizes to try
     # Must be power of 2, larger windows give better frequency resolution but worse time resolution
-    "window": [128, 256],  # TODO: try [64, 128, 256, 512, 1024]
+    "window": [64, 128, 256, 512], # [64, 128, 256, 512, 1024]
 
     # Oversampling factors to try
     # Must be odd integers with 1 being no oversampling
@@ -88,12 +88,13 @@ grid = [{
     # This is one of the most important parameters to tune and is likely anisotropic
     # This also effects grid size and thus memory usage and speed
     "bandwidth": [
-        0.1, 0.2, 0.25, 0.3, 0.4,
+        0.1, 0.2, 0.25, 0.3, 0.4, 0.5, 0.6, 0.8, 1.0,
         (0.1, 0.2), (0.1, 0.25), (0.1, 0.3), (0.1, 0.4),
         (0.2, 0.1), (0.2, 0.25), (0.2, 0.3), (0.2, 0.4),
         (0.25, 0.1), (0.25, 0.2), (0.25, 0.3), (0.25, 0.4),
         (0.3, 0.1), (0.3, 0.2), (0.3, 0.25), (0.3, 0.4),
         (0.4, 0.1), (0.4, 0.2), (0.4, 0.25), (0.4, 0.3),
+        (0.5, 0.3), (0.5, 0.4), (0.4, 0.5),
     ],
 
     # Alpha max values to try, hardcoded for now
@@ -142,7 +143,7 @@ grid = [{
     # Delta smoothing parameters to try
     # Smoothing helps reduce noise in delta estimates and is especially important for big-delta
     # Tuples are (freq, time) smoothing kernel sizes; (1, 1) means no smoothing
-    "delta_smoothing": [(3, 1), (3, 3), (5, 1), (5, 3)],  # (1, 1), (3, 1), (3, 3), (5, 1), (5, 3)
+    "delta_smoothing": [(3, 1), (3, 3), (5, 1), (5, 3), (7, 1)],  # (1, 1), (3, 1), (3, 3), (5, 1), (5, 3)
 
     # Delta smoothing modes to try
     # Can be "mean", "median", or "gaussian"
