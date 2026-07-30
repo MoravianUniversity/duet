@@ -3,6 +3,9 @@ import re
 import sys
 import random
 import time
+import argparse
+from pathlib import Path
+from json4humans import json as jsonc
 from collections import namedtuple
 from multiprocessing import Pool
 
@@ -63,96 +66,96 @@ DEFAULT_SCORES = {
     "recall": 0.0,
 }
 
-grid = [{
-    # Audio Lengths to try (in ms)
-    # Original target was 96ms, must be multiple of 16ms
-    # In theory, longer audio lengths should give better results, but take longer to compute and use more memory
-    "audio_length": [64, 80, 96, 112, 128],
+# grid = [{
+#     # Audio Lengths to try (in ms)
+#     # Original target was 96ms, must be multiple of 16ms
+#     # In theory, longer audio lengths should give better results, but take longer to compute and use more memory
+#     "audio_length": [64, 80, 96, 112, 128],
 
-    # STFT window sizes to try
-    # Must be power of 2, larger windows give better frequency resolution but worse time resolution
-    "window": [64, 128, 256, 512], # [64, 128, 256, 512, 1024]
+#     # STFT window sizes to try
+#     # Must be power of 2, larger windows give better frequency resolution but worse time resolution
+#     "window": [64, 128, 256, 512], # [64, 128, 256, 512, 1024]
 
-    # Oversampling factors to try
-    # Must be odd integers with 1 being no oversampling
-    # Higher oversampling improves resolution in STFT but is much slower
-    "oversample": [1, 3],  # [1, 3, 5],  # higher is much, much, slower and not typically better
+#     # Oversampling factors to try
+#     # Must be odd integers with 1 being no oversampling
+#     # Higher oversampling improves resolution in STFT but is much slower
+#     "oversample": [1, 3],  # [1, 3, 5],  # higher is much, much, slower and not typically better
 
-    # Thresholds to try for peak picking
-    # Lower thresholds include more data but may include more noise and will be slower
-    "threshold": [0.5, 0.75], #[0.25, 0.35, 0.5, 0.75],  # [0.05, 0.1, 0.2, 0.25, 0.5, 0.75]
+#     # Thresholds to try for peak picking
+#     # Lower thresholds include more data but may include more noise and will be slower
+#     "threshold": [0.5, 0.75], #[0.25, 0.35, 0.5, 0.75],  # [0.05, 0.1, 0.2, 0.25, 0.5, 0.75]
 
-    # Bandwidths to try for mean-shift
-    # Single values are isotropic, tuples are (time_bandwidth, frequency_bandwidth)
-    # Bandwidths that are too small may lead to overfitting/noise, too large may miss sources
-    # This is one of the most important parameters to tune and is likely anisotropic
-    # This also effects grid size and thus memory usage and speed
-    "bandwidth": [
-        0.1, 0.2, 0.25, 0.3, 0.4, 0.5, 0.6, 0.8, 1.0,
-        (0.1, 0.2), (0.1, 0.25), (0.1, 0.3), (0.1, 0.4),
-        (0.2, 0.1), (0.2, 0.25), (0.2, 0.3), (0.2, 0.4),
-        (0.25, 0.1), (0.25, 0.2), (0.25, 0.3), (0.25, 0.4),
-        (0.3, 0.1), (0.3, 0.2), (0.3, 0.25), (0.3, 0.4),
-        (0.4, 0.1), (0.4, 0.2), (0.4, 0.25), (0.4, 0.3),
-        (0.5, 0.3), (0.5, 0.4), (0.4, 0.5),
-    ],
+#     # Bandwidths to try for mean-shift
+#     # Single values are isotropic, tuples are (time_bandwidth, frequency_bandwidth)
+#     # Bandwidths that are too small may lead to overfitting/noise, too large may miss sources
+#     # This is one of the most important parameters to tune and is likely anisotropic
+#     # This also effects grid size and thus memory usage and speed
+#     "bandwidth": [
+#         0.1, 0.2, 0.25, 0.3, 0.4, 0.5, 0.6, 0.8, 1.0,
+#         (0.1, 0.2), (0.1, 0.25), (0.1, 0.3), (0.1, 0.4),
+#         (0.2, 0.1), (0.2, 0.25), (0.2, 0.3), (0.2, 0.4),
+#         (0.25, 0.1), (0.25, 0.2), (0.25, 0.3), (0.25, 0.4),
+#         (0.3, 0.1), (0.3, 0.2), (0.3, 0.25), (0.3, 0.4),
+#         (0.4, 0.1), (0.4, 0.2), (0.4, 0.25), (0.4, 0.3),
+#         (0.5, 0.3), (0.5, 0.4), (0.4, 0.5),
+#     ],
 
-    # Alpha max values to try, hardcoded for now
-    "alpha_max": [1.5],  # TODO:
-    # Delta max values to try, hardcoded for now
-    "delta_max": [8.5],  # TODO:
+#     # Alpha max values to try, hardcoded for now
+#     "alpha_max": [1.5],  # TODO:
+#     # Delta max values to try, hardcoded for now
+#     "delta_max": [8.5],  # TODO:
 
-    # Seed counts to try for mean-shift initialization
-    # More seeds means that more unique peaks can possible be found (which may or may not be noise), but is slower
-    # None means to use all possible unique peaks
-    "seed_count": [20, 25, 35],            # [10, 25, 50, 75, 100] # None is slow and bad
+#     # Seed counts to try for mean-shift initialization
+#     # More seeds means that more unique peaks can possible be found (which may or may not be noise), but is slower
+#     # None means to use all possible unique peaks
+#     "seed_count": [20, 25, 35],            # [10, 25, 50, 75, 100] # None is slow and bad
 
-    # Minimum bin counts to try for mean-shift seed selection
-    # Larger will eliminate more seeds and be faster, but may miss some sources (but also may eliminate noise peaks)
-    # A value of 1 means no elimination
-    # Note that as bandwith increases, the size of bins increases and thus the bin count needs to increase to have the same effect
-    "min_bin_count": [5, 10],              # [1, 5, 10, 25, 50, 100]  # in general, larger is much worse and only slightly faster (but there are others that are just as fast)
+#     # Minimum bin counts to try for mean-shift seed selection
+#     # Larger will eliminate more seeds and be faster, but may miss some sources (but also may eliminate noise peaks)
+#     # A value of 1 means no elimination
+#     # Note that as bandwith increases, the size of bins increases and thus the bin count needs to increase to have the same effect
+#     "min_bin_count": [5, 10],              # [1, 5, 10, 25, 50, 100]  # in general, larger is much worse and only slightly faster (but there are others that are just as fast)
 
-    # Max filter sizes to try for mean-shift seed selection
-    # Must be None (for no filtering) or odd integers >1 for filtering
-    # Remove possible seeds that are not local maxima within max_filter_size; this can help speed up results a lot by removing seeds
-    # As this is increased, seed_count should be decreased or min_bin_count increased to prevent finding random local maxima that are not sources
-    "max_filter_size": [None, 3],  # [None, 3, 5]
+#     # Max filter sizes to try for mean-shift seed selection
+#     # Must be None (for no filtering) or odd integers >1 for filtering
+#     # Remove possible seeds that are not local maxima within max_filter_size; this can help speed up results a lot by removing seeds
+#     # As this is increased, seed_count should be decreased or min_bin_count increased to prevent finding random local maxima that are not sources
+#     "max_filter_size": [None, 3],  # [None, 3, 5]
 
-    # Compute seeds with weights or not
-    # Using weights may help find better seeds, but will require a dramatically different min_bin_count
-    # (in my tests of a full audio sample, the `min_bin_count` changed from 50 to 600 when using weights to capture the same number of seeds)
-    "compute_seeds_using_weights":  [False],# [False, True],
+#     # Compute seeds with weights or not
+#     # Using weights may help find better seeds, but will require a dramatically different min_bin_count
+#     # (in my tests of a full audio sample, the `min_bin_count` changed from 50 to 600 when using weights to capture the same number of seeds)
+#     "compute_seeds_using_weights":  [False],# [False, True],
 
-    # Convergence tolerances to try for mean-shift
-    # Larger tolerances will converge faster but may be less accurate
-    # A value of 1.0 means it will converge once reaching the nearest grid point
-    # (but since seeds are initialized at grid points, this means they will not move at all)
-    "convergence_tol": [0.25], #[0.2, 0.25, 0.3],   # [0.05, 0.1, 0.2, 0.25, 0.5]
+#     # Convergence tolerances to try for mean-shift
+#     # Larger tolerances will converge faster but may be less accurate
+#     # A value of 1.0 means it will converge once reaching the nearest grid point
+#     # (but since seeds are initialized at grid points, this means they will not move at all)
+#     "convergence_tol": [0.25], #[0.2, 0.25, 0.3],   # [0.05, 0.1, 0.2, 0.25, 0.5]
 
-    # Alpha conversion operations to try
-    # "symmetric" is the original DUET operation, "log" is a logarithmic scaling
-    # "none" is not recommended as it makes no sense
-    "alpha_op": ["symmetric", "log"],
+#     # Alpha conversion operations to try
+#     # "symmetric" is the original DUET operation, "log" is a logarithmic scaling
+#     # "none" is not recommended as it makes no sense
+#     "alpha_op": ["symmetric", "log"],
 
-    # Big delay methods to try
-    # "none" is the original DUET method (will not work in our system)
-    # "diff" is a differential method
-    "big_delay": ["diff"],
+#     # Big delay methods to try
+#     # "none" is the original DUET method (will not work in our system)
+#     # "diff" is a differential method
+#     "big_delay": ["diff"],
 
-    # Delta smoothing parameters to try
-    # Smoothing helps reduce noise in delta estimates and is especially important for big-delta
-    # Tuples are (freq, time) smoothing kernel sizes; (1, 1) means no smoothing
-    "delta_smoothing": [(3, 1), (3, 3), (5, 1), (5, 3), (7, 1)],  # (1, 1), (3, 1), (3, 3), (5, 1), (5, 3)
+#     # Delta smoothing parameters to try
+#     # Smoothing helps reduce noise in delta estimates and is especially important for big-delta
+#     # Tuples are (freq, time) smoothing kernel sizes; (1, 1) means no smoothing
+#     "delta_smoothing": [(3, 1), (3, 3), (5, 1), (5, 3), (7, 1)],  # (1, 1), (3, 1), (3, 3), (5, 1), (5, 3)
 
-    # Delta smoothing modes to try
-    # Can be "mean", "median", or "gaussian"
-    "delta_smoothing_mode": ["mean", "median", "gaussian"],
+#     # Delta smoothing modes to try
+#     # Can be "mean", "median", or "gaussian"
+#     "delta_smoothing_mode": ["mean", "median", "gaussian"],
 
-    # p and q weights for attenuation and delay estimators (from paper p.225)
-    "p": [0.5, 1, 2],
-    "q": [0, 2],
-}]
+#     # p and q weights for attenuation and delay estimators (from paper p.225)
+#     "p": [0.5, 1, 2],
+#     "q": [0, 2],
+# }]
 
 def find_alpha_deltas(x: np.ndarray, fs: int = 16000, **params):
     """
@@ -328,8 +331,63 @@ def check_params(params: dict, data: list[tuple[np.ndarray, np.ndarray, np.ndarr
         # return {k: np.nan for k in SCORERS.keys()}, np.nan
         return {f"{k}_{stat}": np.nan for k in SCORERS.keys() for stat in ['mean', 'median', 'min', 'max', '25', '75']}, np.nan
 
+def parse_args():
+    parser = argparse.ArgumentParser(description="Run DUET parameter grid search.")
+    parser.add_argument("--grid", required=True, type=Path,
+                         help="Path to a JSON/JSONC file containing the parameter grid.")
+    parser.add_argument("--out", default=OUTPUT_FILENAME,
+                         help=f"Output CSV filename (default: {OUTPUT_FILENAME}).")
+    parser.add_argument("--steps-per-save", "-s", type=int, default=1000,
+                         help="Number of evaluations between progress prints/saves (default: 1000).")
+    return parser.parse_args()
+
+# def main():
+#     # Run all parameter combinations
+#     param_grid = ParameterGrid(grid)
+#     param_grid_df = pd.DataFrame(param_grid)
+#     all_scores = []
+#     times = []
+#     overall_start = time.time()
+#     with Pool(NUM_CORES, init_data) as pool:
+#         for i, (score, elapsed) in enumerate(pool.imap(check_params, param_grid, 100)):
+#             if i % 1000 == 0 and i > 0:
+#                 # Print progress
+#                 elapsed = time.time() - overall_start
+#                 perc = i / len(param_grid)
+#                 per = elapsed / i * 1000
+#                 print(f"Evaluating {i}/{len(param_grid)} {perc:.1%}; "
+#                       f"{round(per)}ms per eval; "
+#                       f"est remaining {per*(len(param_grid)-i)/(60*1000):.1f} min; "
+#                       f"best so far: {min(s['custom_mean'] for s in all_scores):.2f}")
+#                 # Save results
+#                 results = param_grid_df.iloc[:i].copy()
+#                 for k in SCORERS.keys():
+#                     results[f"score_{k}"] = [s[f"{k}_mean"] for s in all_scores]
+#                 results["time"] = times
+#                 results.to_csv(OUTPUT_FILENAME, index=False)
+#             all_scores.append(score)
+#             times.append(elapsed)
+
+#     # Final message
+#     elapsed = time.time() - overall_start
+#     per = elapsed / len(param_grid) * 1000
+#     print(f"Done; {round(per)}ms per eval; total time: "
+#           f"{elapsed/60:.1f} min; "
+#           f"best score: {min(s['custom_mean'] for s in all_scores):.2f}")
+
+#     # Save results
+#     results = param_grid_df.iloc[:len(all_scores)].copy()
+#     for k in SCORERS.keys():
+#         results[f"score_{k}"] = [s[f"{k}_mean"] for s in all_scores]
+#     results["time"] = times
+#     results.to_csv(OUTPUT_FILENAME, index=False)
+
 def main():
-    # Run all parameter combinations
+    args = parse_args()
+
+    with args.grid.open() as f:
+        grid = jsonc.load(f)
+
     param_grid = ParameterGrid(grid)
     param_grid_df = pd.DataFrame(param_grid)
     all_scores = []
@@ -337,8 +395,7 @@ def main():
     overall_start = time.time()
     with Pool(NUM_CORES, init_data) as pool:
         for i, (score, elapsed) in enumerate(pool.imap(check_params, param_grid, 100)):
-            if i % 1000 == 0 and i > 0:
-                # Print progress
+            if i % args.steps_per_save == 0 and i > 0:
                 elapsed = time.time() - overall_start
                 perc = i / len(param_grid)
                 per = elapsed / i * 1000
@@ -346,28 +403,25 @@ def main():
                       f"{round(per)}ms per eval; "
                       f"est remaining {per*(len(param_grid)-i)/(60*1000):.1f} min; "
                       f"best so far: {min(s['custom_mean'] for s in all_scores):.2f}")
-                # Save results
                 results = param_grid_df.iloc[:i].copy()
                 for k in SCORERS.keys():
                     results[f"score_{k}"] = [s[f"{k}_mean"] for s in all_scores]
                 results["time"] = times
-                results.to_csv(OUTPUT_FILENAME, index=False)
+                results.to_csv(args.out, index=False)
             all_scores.append(score)
             times.append(elapsed)
 
-    # Final message
     elapsed = time.time() - overall_start
     per = elapsed / len(param_grid) * 1000
     print(f"Done; {round(per)}ms per eval; total time: "
           f"{elapsed/60:.1f} min; "
           f"best score: {min(s['custom_mean'] for s in all_scores):.2f}")
 
-    # Save results
     results = param_grid_df.iloc[:len(all_scores)].copy()
     for k in SCORERS.keys():
         results[f"score_{k}"] = [s[f"{k}_mean"] for s in all_scores]
     results["time"] = times
-    results.to_csv(OUTPUT_FILENAME, index=False)
-
+    results.to_csv(args.out, index=False)
+    
 if __name__ == "__main__":
     main()
