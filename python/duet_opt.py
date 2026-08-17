@@ -5,7 +5,8 @@ import random
 import time
 import argparse
 from pathlib import Path
-from json4humans import json as jsonc
+from json4humans import jsonc
+from json4humans.types import Literal
 from collections import namedtuple
 from multiprocessing import Pool
 
@@ -40,7 +41,9 @@ MIN_RMS_DB = -40       # minimum RMS in dB, used to filter out very quiet source
 #   * sub_audios (list of individual audio sources, composed with the same delays and attenuations as the full audio)
 DATA: list[tuple[np.ndarray, np.ndarray, np.ndarray, list[np.ndarray]]] = []
 
-NUM_CORES = (os.process_cpu_count() or 2) // 2
+# NUM_CORES = (os.process_cpu_count() or 2) // 2
+NUM_CORES = os.process_cpu_count() or 2
+
 
 OUTPUT_FILENAME = "duet_opt_results.csv"
 
@@ -341,6 +344,24 @@ def parse_args():
                          help="Number of evaluations between progress prints/saves (default: 1000).")
     return parser.parse_args()
 
+def to_native(obj):
+    """Recursively convert json4humans's style-preserving types to plain Python values."""
+    if isinstance(obj, Literal):
+        return obj.value
+    if isinstance(obj, dict):
+        return {k: to_native(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [to_native(v) for v in obj]
+    if isinstance(obj, bool):
+        return obj
+    if isinstance(obj, int):
+        return int(obj)
+    if isinstance(obj, float):
+        return float(obj)
+    if isinstance(obj, str):
+        return str(obj)
+    return obj
+
 # def main():
 #     # Run all parameter combinations
 #     param_grid = ParameterGrid(grid)
@@ -386,7 +407,7 @@ def main():
     args = parse_args()
 
     with args.grid.open() as f:
-        grid = jsonc.load(f)
+        grid = to_native(jsonc.load(f))
 
     param_grid = ParameterGrid(grid)
     param_grid_df = pd.DataFrame(param_grid)
