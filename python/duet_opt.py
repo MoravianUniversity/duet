@@ -3,6 +3,7 @@ import re
 import sys
 import random
 import time
+import traceback
 import argparse
 from pathlib import Path
 from json4humans import jsonc
@@ -331,6 +332,7 @@ def check_params(params: dict, data: list[tuple[np.ndarray, np.ndarray, np.ndarr
         return result, elapsed
     except Exception as e:
         print(f"Error occurred while evaluating params {params}: {e}", file=sys.stderr)
+        traceback.print_exc(file=sys.stderr)
         # return {k: np.nan for k in SCORERS.keys()}, np.nan
         return {f"{k}_{stat}": np.nan for k in SCORERS.keys() for stat in ['mean', 'median', 'min', 'max', '25', '75']}, np.nan
 
