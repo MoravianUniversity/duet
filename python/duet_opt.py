@@ -331,8 +331,9 @@ def check_params(params: dict, data: list[tuple[np.ndarray, np.ndarray, np.ndarr
         
         return result, elapsed
     except Exception as e:
-        print(f"Error occurred while evaluating params {params}: {e}", file=sys.stderr)
-        traceback.print_exc(file=sys.stderr)
+        msg = f"Error occurred while evaluating params {params}: {e}\n{traceback.format_exc()}\n"
+        sys.stderr.write(msg)
+        sys.stderr.flush()
         # return {k: np.nan for k in SCORERS.keys()}, np.nan
         return {f"{k}_{stat}": np.nan for k in SCORERS.keys() for stat in ['mean', 'median', 'min', 'max', '25', '75']}, np.nan
 
