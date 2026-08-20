@@ -5,6 +5,7 @@ Weighted Mean Shift from https://www.sciencedirect.com/science/article/abs/pii/S
 """
 
 from typing import Sequence, Callable
+from collections.abc import Sized
 
 import numpy as np
 from numpy import ndarray
@@ -374,7 +375,7 @@ def make_gaussian_kernel(bandwidth: float|ndarray,
         weights = np.asarray(weights)
         #weights *= factor
 
-    is_scalar = np.isscalar(bandwidth) or len(bandwidth) == 1 and np.isscalar(bandwidth[0])
+    is_scalar = _is_scalar(bandwidth[0])
     bandwidth = np.asarray(bandwidth)
     if is_scalar:
         bandwidth = bandwidth.squeeze()
@@ -399,6 +400,14 @@ def make_gaussian_kernel(bandwidth: float|ndarray,
                 diffs = p - pts
                 return np.exp(np.sum(diffs*diffs*exponent_factor, axis=1))
     return gaussian_kernel
+
+
+def _is_scalar(x: float|ndarray|Sequence[float]) -> bool:
+    if np.isscalar(x):
+        return True
+    if isinstance(x, Sized) and len(x) == 1 and np.isscalar(x[0]):
+        return True
+    return False
 
 
 def make_adaptive_gaussian_kernel(h_global: float|ndarray,
@@ -446,7 +455,7 @@ def make_adaptive_gaussian_kernel(h_global: float|ndarray,
     bin_size = np.asarray(bin_size)
     mins_0_5 = mins + 0.5
 
-    is_scalar = np.isscalar(h_global) or len(h_global) == 1 and np.isscalar(h_global[0])
+    is_scalar = _is_scalar(h_global)
     h_global = np.asarray(h_global)
     if is_scalar:
         h_global = h_global.squeeze()
@@ -525,7 +534,7 @@ def make_dynamic_gaussian_kernel(h_global: float|ndarray,
     bin_size = np.asarray(bin_size)
     mins_0_5 = mins + 0.5
 
-    is_scalar = np.isscalar(h_global) or len(h_global) == 1 and np.isscalar(h_global[0])
+    is_scalar = _is_scalar(h_global)
     h_global = np.asarray(h_global)
 
     if is_scalar:
