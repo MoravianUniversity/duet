@@ -402,12 +402,8 @@ def make_gaussian_kernel(bandwidth: float|ndarray,
     return gaussian_kernel
 
 
-def _is_scalar(x: float|ndarray|Sequence[float]) -> bool:
-    if np.isscalar(x):
-        return True
-    if isinstance(x, Sized) and len(x) == 1 and np.isscalar(x[0]):
-        return True
-    return False
+def _is_scalar(x: float | ndarray | Sequence[float]) -> bool:
+    return np.ndim(x) == 0 or np.size(x) == 1
 
 
 def make_adaptive_gaussian_kernel(h_global: float|ndarray,
