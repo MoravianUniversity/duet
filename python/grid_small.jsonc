@@ -1,0 +1,26 @@
+[
+  {
+    // Small memory-stress-test grid: picks the heaviest-looking value along
+    // each dimension (longest audio, largest window, highest oversample,
+    // widest delta_smoothing kernel) to see how much memory a single worker
+    // uses on the most expensive combinations.
+    "audio_length": [128],
+    "window": [512],
+    "oversample": [3],
+    "threshold": [0.5],
+    "bandwidth": [0.1, [0.4, 0.5]],
+    "alpha_max": [1.5],
+    "delta_max": [8.5],
+    "seed_count": [35],
+    "min_bin_count": [5],
+    "max_filter_size": [null],
+    "compute_seeds_using_weights": [false],
+    "convergence_tol": [0.25],
+    "alpha_op": ["symmetric"],
+    "big_delay": ["diff"],
+    "delta_smoothing": [[7, 1]],
+    "delta_smoothing_mode": ["gaussian"],
+    "p": [2],
+    "q": [2]
+  }
+]
