@@ -375,7 +375,7 @@ def make_gaussian_kernel(bandwidth: float|ndarray,
         weights = np.asarray(weights)
         #weights *= factor
 
-    is_scalar = _is_scalar(bandwidth[0])
+    is_scalar = _is_scalar(bandwidth)
     bandwidth = np.asarray(bandwidth)
     if is_scalar:
         bandwidth = bandwidth.squeeze()
