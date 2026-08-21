@@ -5,6 +5,7 @@ import random
 import time
 import traceback
 import argparse
+import signal
 from pathlib import Path
 from json4humans import jsonc
 from json4humans.types import Literal
@@ -285,7 +286,15 @@ def init_data():
 
         DATA.append((audio, attenuations, delays, sub_audios))
 
-def check_params(params: dict, data: list[tuple[np.ndarray, np.ndarray, np.ndarray, list[np.ndarray]]] = DATA) -> tuple[dict[str, float], float]:
+class EvalTimeout(Exception):
+    pass
+
+def _timeout_handler(signum, frame):
+    raise EvalTimeout()
+
+signal.signal(signal.SIGALRM, _timeout_handler)
+
+def check_params(params: dict, data: list[...] = DATA) -> tuple[dict[str, float], float]:
     """
     Check a given set of DUET parameters by scoring them on the entire test data.
 
@@ -301,6 +310,7 @@ def check_params(params: dict, data: list[tuple[np.ndarray, np.ndarray, np.ndarr
     #    even the best solutions can be missing some of the true sources
     # maybe use some other form of mean? double count max?
     start = time.time()
+    signal.alarm(30)
     try:
         preds = [find_alpha_deltas(d[0], **params) for d in data]
         elapsed = (time.time() - start) / len(data)
@@ -330,12 +340,14 @@ def check_params(params: dict, data: list[tuple[np.ndarray, np.ndarray, np.ndarr
             # TODO: use rmse(cur_scores) instead of nanmean?
         
         return result, elapsed
-    except Exception as e:
-        msg = f"Error occurred while evaluating params {params}: {e}\n{traceback.format_exc()}\n"
-        sys.stderr.write(msg)
-        sys.stderr.flush()
-        # return {k: np.nan for k in SCORERS.keys()}, np.nan
+    except EvalTimeout:
+        print(f"TIMEOUT (>30s) evaluating params {params}", file=sys.stderr)
         return {f"{k}_{stat}": np.nan for k in SCORERS.keys() for stat in ['mean', 'median', 'min', 'max', '25', '75']}, np.nan
+    except Exception as e:
+        print(f"Error occurred while evaluating params {params}: {e}", file=sys.stderr)
+        return {f"{k}_{stat}": np.nan for k in SCORERS.keys() for stat in ['mean', 'median', 'min', 'max', '25', '75']}, np.nan
+    finally:
+        signal.alarm(0)
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Run DUET parameter grid search.")
