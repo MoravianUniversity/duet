@@ -417,7 +417,7 @@ def main():
     all_scores = []
     times = []
     overall_start = time.time()
-    with Pool(NUM_CORES, init_data) as pool:
+    with Pool(NUM_CORES, init_data, maxtasksperchild=5) as pool:
         for i, (score, elapsed) in enumerate(pool.imap(check_params, param_grid, 100)):
             if i % args.steps_per_save == 0 and i > 0:
                 elapsed = time.time() - overall_start
