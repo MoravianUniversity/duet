@@ -377,50 +377,8 @@ def to_native(obj):
         return str(obj)
     return obj
 
-# def main():
-#     # Run all parameter combinations
-#     param_grid = ParameterGrid(grid)
-#     param_grid_df = pd.DataFrame(param_grid)
-#     all_scores = []
-#     times = []
-#     overall_start = time.time()
-#     with Pool(NUM_CORES, init_data) as pool:
-#         for i, (score, elapsed) in enumerate(pool.imap(check_params, param_grid, 100)):
-#             if i % 1000 == 0 and i > 0:
-#                 # Print progress
-#                 elapsed = time.time() - overall_start
-#                 perc = i / len(param_grid)
-#                 per = elapsed / i * 1000
-#                 print(f"Evaluating {i}/{len(param_grid)} {perc:.1%}; "
-#                       f"{round(per)}ms per eval; "
-#                       f"est remaining {per*(len(param_grid)-i)/(60*1000):.1f} min; "
-#                       f"best so far: {min(s['custom_mean'] for s in all_scores):.2f}")
-#                 # Save results
-#                 results = param_grid_df.iloc[:i].copy()
-#                 for k in SCORERS.keys():
-#                     results[f"score_{k}"] = [s[f"{k}_mean"] for s in all_scores]
-#                 results["time"] = times
-#                 results.to_csv(OUTPUT_FILENAME, index=False)
-#             all_scores.append(score)
-#             times.append(elapsed)
-
-#     # Final message
-#     elapsed = time.time() - overall_start
-#     per = elapsed / len(param_grid) * 1000
-#     print(f"Done; {round(per)}ms per eval; total time: "
-#           f"{elapsed/60:.1f} min; "
-#           f"best score: {min(s['custom_mean'] for s in all_scores):.2f}")
-
-#     # Save results
-#     results = param_grid_df.iloc[:len(all_scores)].copy()
-#     for k in SCORERS.keys():
-#         results[f"score_{k}"] = [s[f"{k}_mean"] for s in all_scores]
-#     results["time"] = times
-#     results.to_csv(OUTPUT_FILENAME, index=False)
-
 def main():
     args = parse_args()
-
     with args.grid.open() as f:
         grid = to_native(jsonc.load(f))
 
@@ -429,35 +387,34 @@ def main():
     all_scores = []
     times = []
     overall_start = time.time()
+    last_save = 0
+
     with Pool(NUM_CORES, init_data, maxtasksperchild=5) as pool:
         for i, (score, elapsed) in enumerate(pool.imap(check_params, param_grid, 100)):
-            if i % args.steps_per_save == 0 and i > 0:
-                elapsed = time.time() - overall_start
-                perc = i / len(param_grid)
-                per = elapsed / i * 1000
-                print(f"Evaluating {i}/{len(param_grid)} {perc:.1%}; "
+            all_scores.append(score)
+            times.append(elapsed)
+            if (i + 1) % args.steps_per_save == 0:
+                elapsed_total = time.time() - overall_start
+                perc = (i + 1) / len(param_grid)
+                per = elapsed_total / (i + 1) * 1000
+                print(f"Evaluating {i+1}/{len(param_grid)} {perc:.1%}; "
                       f"{round(per)}ms per eval; "
-                      f"est remaining {per*(len(param_grid)-i)/(60*1000):.1f} min; "
+                      f"est remaining {per*(len(param_grid)-i-1)/(60*1000):.1f} min; "
                       f"best so far: {min(s['custom_mean'] for s in all_scores):.2f}")
-                results = param_grid_df.iloc[:i].copy()
+                results = param_grid_df.iloc[last_save:i+1].copy()
                 for k in SCORERS.keys():
                     results[f"score_{k}"] = [s[f"{k}_mean"] for s in all_scores]
                 results["time"] = times
-                results.to_csv(args.out, index=False)
-            all_scores.append(score)
-            times.append(elapsed)
+                results.to_csv(args.out, mode='a' if last_save > 0 else 'w',
+                                header=(last_save == 0), index=False)
+                all_scores = []
+                times = []
+                last_save = i + 1
 
-    elapsed = time.time() - overall_start
-    per = elapsed / len(param_grid) * 1000
-    print(f"Done; {round(per)}ms per eval; total time: "
-          f"{elapsed/60:.1f} min; "
-          f"best score: {min(s['custom_mean'] for s in all_scores):.2f}")
-
-    results = param_grid_df.iloc[:len(all_scores)].copy()
-    for k in SCORERS.keys():
-        results[f"score_{k}"] = [s[f"{k}_mean"] for s in all_scores]
-    results["time"] = times
-    results.to_csv(args.out, index=False)
-    
-if __name__ == "__main__":
-    main()
+    if all_scores:
+        results = param_grid_df.iloc[last_save:len(param_grid)].copy()
+        for k in SCORERS.keys():
+            results[f"score_{k}"] = [s[f"{k}_mean"] for s in all_scores]
+        results["time"] = times
+        results.to_csv(args.out, mode='a' if last_save > 0 else 'w',
+                        header=(last_save == 0), index=False)
