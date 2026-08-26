@@ -419,3 +419,6 @@ def main():
         results["time"] = times
         results.to_csv(args.out, mode='a' if last_save > 0 else 'w',
                         header=(last_save == 0), index=False)
+
+if __name__ == "__main__":
+    main()
