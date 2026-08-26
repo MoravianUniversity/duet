@@ -378,11 +378,12 @@ def to_native(obj):
     return obj
 
 def main():
+    print("MAIN STARTED", flush=True)
     args = parse_args()
     with args.grid.open() as f:
         grid = to_native(jsonc.load(f))
-
     param_grid = ParameterGrid(grid)
+    print(f"GRID LOADED: {len(param_grid)} combos", flush=True)
     param_grid_df = pd.DataFrame(param_grid)
     all_scores = []
     times = []
